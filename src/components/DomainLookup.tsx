@@ -10,6 +10,7 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { addRecentQuery } from './RecentQueries';
 import { getFromCache, saveToCache } from '@/hooks/useQueryCache';
+import { useTldSuggestions, autoCompleteDomain } from '@/hooks/useTldSuggestions';
 
 interface DomainLookupProps {
   initialDomain?: string;
@@ -31,6 +32,7 @@ const DomainLookup = ({ initialDomain, onFavoriteAdded, onDomainQueried }: Domai
   const { user } = useAuth();
   const { toast } = useToast();
   const { t, language } = useLanguage();
+  const { allTlds } = useTldSuggestions();
 
   useEffect(() => {
     if (initialDomain) {
@@ -266,7 +268,12 @@ const DomainLookup = ({ initialDomain, onFavoriteAdded, onDomainQueried }: Domai
   };
 
   const handleLookup = async () => {
-    await handleLookupWithDomain(domain);
+    // Auto-complete with .com if no valid TLD
+    const completedDomain = autoCompleteDomain(domain, allTlds);
+    if (completedDomain !== domain) {
+      setDomain(completedDomain);
+    }
+    await handleLookupWithDomain(completedDomain);
   };
 
   const toggleFavorite = async () => {
