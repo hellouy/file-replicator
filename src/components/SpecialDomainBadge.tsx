@@ -12,6 +12,7 @@ const SPECIAL_DOMAINS = [
   'l.ke',
   'top.vg',
   'domain.bf',
+  'hello.sn',
 ];
 
 const SpecialDomainBadge = ({ domain, position = 'inline' }: SpecialDomainBadgeProps) => {
