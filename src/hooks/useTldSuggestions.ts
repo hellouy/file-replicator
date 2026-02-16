@@ -115,19 +115,26 @@ export const useTldSuggestions = () => {
 export const autoCompleteDomain = (input: string, allTlds: string[]): string => {
   const trimmed = input.trim().toLowerCase();
   if (!trimmed) return '';
-  
-  // Check if already has a valid TLD
+
+  // Check if already has a dot and a reasonable TLD-like suffix
   if (trimmed.includes('.')) {
     const parts = trimmed.split('.');
     const lastPart = parts[parts.length - 1];
-    
-    // Check if the last part is a valid TLD
-    if (allTlds.includes(lastPart)) {
+
+    // If the last part looks like a valid TLD (2-63 letters, no numbers or special chars)
+    // treat it as a valid domain even if not in our database list
+    const tldRegex = /^[a-z]{2,63}$/;
+    if (tldRegex.test(lastPart)) {
+      return trimmed;
+    }
+
+    // Also check our known TLD list (for additional validation)
+    if (allTlds.length > 0 && allTlds.includes(lastPart)) {
       return trimmed;
     }
   }
-  
-  // No TLD or invalid TLD - append .com
+
+  // No TLD or invalid TLD format - append .com
   // Remove trailing dot if exists
   const cleanInput = trimmed.replace(/\.$/, '');
   return `${cleanInput}.com`;
