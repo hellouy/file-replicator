@@ -1,239 +1,223 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useRef, useEffect } from 'react';
+import { Input } from '@/components/ui/input';
+import { Button } from '@/components/ui/button';
+import { Loader2 } from 'lucide-react';
+import { useLanguage } from '@/hooks/useLanguage';
+import { useTldSuggestions, autoCompleteDomain } from '@/hooks/useTldSuggestions';
+import { cn } from '@/lib/utils';
 
-/* ===============================
-   安全域名清洗（不会拼接）
-================================ */
-function clean(v: string) {
-  if (!v) return "";
+interface DomainSearchProps {
+  domain: string;
+  setDomain: (domain: string) => void;
+  onSearch: () => void;
+  loading: boolean;
+}
 
-  return v
+/**
+ * ⭐ 商业级输入清洗函数（核心）
+ */
+function cleanDomainInput(value: string) {
+
+  return value
     .toLowerCase()
     .trim()
-    .replace(/^https?:\/\//, "")
-    .replace(/^www\./, "")
-    .split("/")[0]
-    .split("@").pop() || ""
-    .replace(/[^a-z0-9.-]/g, "")
-    .replace(/\.{2,}/g, ".");
+    .replace(/[，。]/g, '.')        // 中文标点 → .
+    .replace(/[, ]+/g, '.')        // 逗号空格 → .
+    .replace(/\.{2,}/g, '.')       // 多个点 → 一个
+    .replace(/[^a-z0-9.-]/g, '');  // 去非法字符
 }
 
-/* ===============================
-   静态后缀列表（安全）
-================================ */
-const TLDS = [
-  ".com",
-  ".ai",
-  ".io",
-  ".co",
-  ".app",
-  ".dev",
-  ".net",
-];
+const DomainSearch = ({
+  domain,
+  setDomain,
+  onSearch,
+  loading,
+}: DomainSearchProps) => {
 
-/* ===============================
-   生成建议（纯函数）
-   ⚠️ 绝不修改 domain
-================================ */
-function buildSuggestions(input: string) {
-
-  if (!input) return [];
-
-  // 已经完整域名 → 不生成
-  if (input.includes(".")) return [];
-
-  return TLDS.map(t => input + t);
-}
-
-/* ===============================
-   主组件
-================================ */
-export default function DomainSearch() {
-
-  const [value, setValue] = useState("");
+  const { t } = useLanguage();
+  const { allTlds, getSuggestions } = useTldSuggestions();
 
   const [suggestions, setSuggestions] = useState<string[]>([]);
   const [show, setShow] = useState(false);
   const [index, setIndex] = useState(-1);
 
   const inputRef = useRef<HTMLInputElement>(null);
+  const boxRef = useRef<HTMLDivElement>(null);
 
-  /* ===============================
-     只根据 value 生成建议
-     ⚠️ 不允许 setValue
-  =================================*/
+  /**
+   * ⭐ 输入变化 → 防抖建议
+   */
   useEffect(() => {
 
-    const timer = setTimeout(() => {
+    const id = setTimeout(() => {
 
-      const cleaned = clean(value);
-
-      if (!cleaned) {
+      if (!domain.trim()) {
         setSuggestions([]);
         return;
       }
 
-      setSuggestions(buildSuggestions(cleaned));
+      setSuggestions(getSuggestions(domain));
+      setIndex(-1);
 
-    }, 120);
+    }, 80);
 
-    return () => clearTimeout(timer);
+    return () => clearTimeout(id);
 
-  }, [value]);
+  }, [domain, getSuggestions]);
 
-  /* ===============================
-     用户输入（唯一能改 value 的地方）
-  =================================*/
-  const onChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+  /**
+   * 点击外面关闭
+   */
+  useEffect(() => {
 
-    const raw = e.target.value;
+    const close = (e: MouseEvent) => {
 
-    // ⭐ 防字符串爆炸（关键）
-    if (raw.length > value.length + 6) {
-      console.warn("blocked abnormal input", raw);
-      return;
-    }
+      if (
+        !inputRef.current?.contains(e.target as Node) &&
+        !boxRef.current?.contains(e.target as Node)
+      ) setShow(false);
 
-    setValue(clean(raw));
-    setShow(true);
-  };
+    };
 
-  /* ===============================
-     粘贴（Google级必须）
-  =================================*/
-  const onPaste = (e: React.ClipboardEvent<HTMLInputElement>) => {
-    e.preventDefault();
-    const text = e.clipboardData.getData("text");
-    setValue(clean(text));
-    setShow(true);
-  };
+    document.addEventListener('mousedown', close);
+    return () => document.removeEventListener('mousedown', close);
 
-  /* ===============================
-     搜索
-  =================================*/
-  const search = () => {
+  }, []);
 
-    if (!value) return;
+  /**
+   * ⭐ 真正搜索（终极修正版）
+   */
+  const handleSearch = () => {
 
-    let d = value;
+    let cleaned = cleanDomainInput(domain);
+    if (!cleaned) return;
 
-    if (!d.includes(".")) {
-      d += ".com";
-    }
+    cleaned = autoCompleteDomain(cleaned, allTlds);
 
-    console.log("SEARCH:", d);
-
+    setDomain(cleaned);
     setShow(false);
+
+    setTimeout(onSearch, 0);
   };
 
-  /* ===============================
-     键盘
-  =================================*/
+  /**
+   * ⭐ 键盘控制（优化版）
+   */
   const onKeyDown = (e: React.KeyboardEvent) => {
 
-    if (e.key === "ArrowDown") {
+    if (loading) return;
+
+    if (e.key === 'ArrowDown') {
       e.preventDefault();
       setShow(true);
       setIndex(i => Math.min(i + 1, suggestions.length - 1));
     }
 
-    else if (e.key === "ArrowUp") {
+    else if (e.key === 'ArrowUp') {
       e.preventDefault();
-      setIndex(i => Math.max(i - 1, -1));
+      setIndex(i => Math.max(i - 1, 0));
     }
 
-    else if (e.key === "Enter") {
+    else if (e.key === 'Enter') {
       e.preventDefault();
 
       if (show && index >= 0) {
-        setValue(suggestions[index]);   // 只有用户按键才允许写
+        setDomain(suggestions[index]);
         setShow(false);
       } else {
-        search();
+        handleSearch();
       }
     }
 
-    else if (e.key === "Escape") {
-      setShow(false);
-    }
+    else if (e.key === 'Escape') setShow(false);
   };
 
+  /**
+   * 输入变化
+   */
+  const onChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+
+    const cleaned = cleanDomainInput(e.target.value);
+    setDomain(cleaned);
+    setShow(true);
+  };
+
+  /**
+   * 点击建议
+   */
   const choose = (s: string) => {
-    setValue(s);      // 只有点击才写
+    setDomain(s);
     setShow(false);
     inputRef.current?.focus();
   };
 
   return (
-    <div style={{ position: "relative", display: "flex", gap: 8 }}>
 
-      <div style={{ flex: 1, position: "relative" }}>
+    <div className="relative flex gap-2">
 
-        <input
+      <div className="relative flex-1">
+
+        <Input
           ref={inputRef}
-          value={value}
-
-          /* ⭐ Safari终极防补全 */
-          autoComplete="new-password"
-          autoCorrect="off"
-          autoCapitalize="none"
-          spellCheck={false}
-          name="domain-input-39281"
-
-          placeholder="Search domain"
-
+          value={domain}
+          placeholder={t('search.placeholder')}
           onChange={onChange}
-          onPaste={onPaste}
           onKeyDown={onKeyDown}
-
-          onFocus={() => setShow(true)}
-
-          style={{
-            width: "100%",
-            padding: 12,
-            fontSize: 18
-          }}
+          onFocus={() => suggestions.length && setShow(true)}
+          autoComplete="off"
+          disabled={loading}
         />
 
+        {/* ⭐ 商业级建议框 */}
         {show && suggestions.length > 0 && (
-          <div style={{
-            position: "absolute",
-            top: "100%",
-            left: 0,
-            right: 0,
-            background: "#fff",
-            border: "1px solid #ddd",
-            borderRadius: 10,
-            marginTop: 4,
-            overflow: "hidden"
-          }}>
-            {suggestions.slice(0,8).map((s,i)=>(
+
+          <div
+            ref={boxRef}
+            className="
+              absolute top-full left-0 right-0 mt-1
+              bg-popover border rounded-xl
+              shadow-xl z-50 overflow-hidden
+            "
+          >
+
+            {suggestions.slice(0, 8).map((s, i) => (
+
               <div
                 key={s}
-                onClick={()=>choose(s)}
-                style={{
-                  padding:10,
-                  cursor:"pointer",
-                  background: i===index ? "#eee":"white"
-                }}
+                onClick={() => choose(s)}
+                className={cn(
+                  "px-3 py-2 text-sm cursor-pointer",
+                  "hover:bg-accent transition",
+                  i === index && "bg-accent"
+                )}
               >
                 {s}
               </div>
+
             ))}
+
+            <div className="px-3 py-1.5 text-xs text-muted-foreground border-t bg-muted/30">
+              ↑↓ 选择 · Enter 搜索 · Esc 关闭
+            </div>
+
           </div>
+
         )}
 
       </div>
 
-      <button
-        onClick={search}
-        style={{
-          padding:"0 16px",
-          fontSize:16
-        }}
+      <Button
+        onClick={handleSearch}
+        disabled={loading}
+        className="min-w-[72px]"
       >
-        Search
-      </button>
+        {loading
+          ? <Loader2 className="h-4 w-4 animate-spin"/>
+          : t('search.button')}
+      </Button>
 
     </div>
   );
-}
+};
+
+export default DomainSearch;
