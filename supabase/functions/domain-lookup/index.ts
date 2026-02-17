@@ -1022,67 +1022,82 @@ function formatDateChinese(dateStr: string): string {
 }
 
 // 计算域名年龄标签
+// ======================
+// 计算域名年龄标签
+// ======================
 function getAgeLabel(registrationDate: string): string | null {
   if (!registrationDate) return null;
-  
+
   try {
     const regDate = new Date(registrationDate);
     if (isNaN(regDate.getTime())) return null;
-    
+
     const now = new Date();
-    const years = Math.floor((now.getTime() - regDate.getTime()) / (365.25 * 24 * 60 * 60 * 1000));
-    
+    const diffTime = now.getTime() - regDate.getTime();
+    const diffDays = diffTime / (1000 * 60 * 60 * 24);
+
+    // 小于 1 个月视为“新注册”
+    if (diffDays < 30) return '新注册';
+
+    // 按年份计算标签
+    const years = diffDays / 365.25;
+
     if (years >= 30) return '创世古董';
     if (years >= 20) return '古董域名';
     if (years >= 15) return '老域名';
     if (years >= 10) return '成熟域名';
     if (years >= 5) return '中龄域名';
     if (years >= 1) return '新域名';
-    return '新注册';
+
+    // 注册超过 1 个月但不到 1 年
+    return '新域名';
   } catch {
     return null;
   }
 }
 
-// 计算更新时间标签
-function getUpdateLabel(status: string[]): string | null {
+// ======================
+// 计算更新锁定标签
+// ======================
+function getUpdateLabel(status: string[] | null | undefined): string | null {
   if (!status || status.length === 0) return null;
-  
-  const hasAllLocks = status.some(s => {
-    const lower = s.toLowerCase();
-    return lower.includes('clientdeleteprohibited') || lower.includes('client delete prohibited');
-  }) && status.some(s => {
-    const lower = s.toLowerCase();
-    return lower.includes('clienttransferprohibited') || lower.includes('client transfer prohibited');
-  }) && status.some(s => {
-    const lower = s.toLowerCase();
-    return lower.includes('clientupdateprohibited') || lower.includes('client update prohibited');
-  });
-  
-  if (hasAllLocks) return '全功能高密锁定';
-  
-  const hasTransferLock = status.some(s => {
-    const lower = s.toLowerCase();
-    return lower.includes('transferprohibited') || lower.includes('transfer prohibited');
-  });
-  
+
+  const lowerStatuses = status.map(s => s.toLowerCase());
+
+  // 全功能高密锁定：delete + transfer + update
+  const hasAllLocks =
+    lowerStatuses.some(s => s.includes('clientdeleteprohibited') || s.includes('client delete prohibited')) &&
+    lowerStatuses.some(s => s.includes('clienttransferprohibited') || s.includes('client transfer prohibited')) &&
+    lowerStatuses.some(s => s.includes('clientupdateprohibited') || s.includes('client update prohibited'));
+
+  if (hasAllLocks) return '安全锁定';
+
+  // 转移锁定：transfer
+  const hasTransferLock = lowerStatuses.some(
+    s => s.includes('transferprohibited') || s.includes('transfer prohibited')
+  );
+
   if (hasTransferLock) return '转移锁定';
-  
+
   return null;
 }
 
+// ======================
 // 计算剩余天数
+// ======================
 function getRemainingDays(expirationDate: string): number | null {
   if (!expirationDate) return null;
-  
+
   try {
     const expDate = new Date(expirationDate);
     if (isNaN(expDate.getTime())) return null;
-    
+
     const now = new Date();
     const diffTime = expDate.getTime() - now.getTime();
+
+    // 向上取整，保证还剩半天也算 1 天
     const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
-    
+
     return diffDays;
   } catch {
     return null;
