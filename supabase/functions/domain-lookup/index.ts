@@ -2128,6 +2128,7 @@ async function queryWhois(domain: string): Promise<any> {
       'cc': ['whois.nic.cc'],
       'ws': ['whois.website.ws'],
       'la': ['whois.nic.la'],
+      'ong': ['whois.nic.ong'],
     };
     
     const tldServers = gTldServers[tld] || ['whois.verisign-grs.com', 'whois.internic.net'];
