@@ -1,22 +1,18 @@
-import { useState, useEffect } from 'react';
-import { Clock, Trash2, ChevronLeft, ChevronRight, AlertCircle } from 'lucide-react';
+import { useState, useEffect, useRef } from 'react';
+import { Clock, Trash2, CheckCircle2, XCircle, AlertCircle, ChevronRight } from 'lucide-react';
 import { useLanguage } from '@/hooks/useLanguage';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { 
-  Pagination, 
-  PaginationContent, 
-  PaginationItem, 
-  PaginationLink, 
-  PaginationNext, 
-  PaginationPrevious 
-} from '@/components/ui/pagination';
+import { cn } from '@/lib/utils';
 import DomainFavicon from './DomainFavicon';
+
+// 定义明确的状态类型
+type QueryStatus = 'registered' | 'available' | 'failed';
 
 interface RecentQuery {
   domain: string;
   timestamp: number;
-  status: 'registered' | 'available' | 'unknown'; // 强化状态判定
+  status: QueryStatus;
 }
 
 interface RecentQueriesProps {
@@ -25,15 +21,14 @@ interface RecentQueriesProps {
 }
 
 const STORAGE_KEY = 'recent_domain_queries';
-const ITEMS_PER_PAGE = 6;
 
-/** 智能保存记录 */
-export const addRecentQuery = (domain: string, status: 'registered' | 'available' | 'unknown' = 'unknown') => {
+/** 智能保存逻辑：确保状态准确 */
+export const addRecentQuery = (domain: string, status: QueryStatus = 'failed') => {
   try {
     const stored = localStorage.getItem(STORAGE_KEY);
     let queries: RecentQuery[] = stored ? JSON.parse(stored) : [];
 
-    // 去重并置顶
+    // 去重并置顶最新记录
     queries = queries.filter(q => q.domain.toLowerCase() !== domain.toLowerCase());
     queries.unshift({
       domain: domain.toLowerCase(),
@@ -41,24 +36,23 @@ export const addRecentQuery = (domain: string, status: 'registered' | 'available
       status,
     });
 
-    // 限制总量 50 条
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(queries.slice(0, 50)));
-    window.dispatchEvent(new Event('storage')); // 触发跨标签/组件同步
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(queries.slice(0, 30)));
+    window.dispatchEvent(new Event('storage'));
   } catch (e) {
-    console.error('Save failed:', e);
+    console.error('LocalStorage Save Error', e);
   }
 };
 
 const RecentQueries = ({ onSelectDomain, refreshTrigger }: RecentQueriesProps) => {
   const [queries, setQueries] = useState<RecentQuery[]>([]);
-  const [currentPage, setCurrentPage] = useState(1);
-  const { language, t } = useLanguage();
+  const { language } = useLanguage();
+  const scrollRef = useRef<HTMLDivElement>(null);
 
   const loadQueries = () => {
     try {
       const stored = localStorage.getItem(STORAGE_KEY);
       setQueries(stored ? JSON.parse(stored) : []);
-    } catch (e) {
+    } catch {
       setQueries([]);
     }
   };
@@ -74,136 +68,101 @@ const RecentQueries = ({ onSelectDomain, refreshTrigger }: RecentQueriesProps) =
     const updated = queries.filter(q => q.domain !== domain);
     localStorage.setItem(STORAGE_KEY, JSON.stringify(updated));
     setQueries(updated);
-    // 如果当前页变空，自动回到上一页
-    if (updated.length <= (currentPage - 1) * ITEMS_PER_PAGE && currentPage > 1) {
-      setCurrentPage(currentPage - 1);
-    }
   };
 
   const handleClearAll = () => {
-    if (confirm(language === 'zh' ? '确定要清空所有记录吗？' : 'Clear all records?')) {
+    if (confirm(language === 'zh' ? '确定清空所有查询历史？' : 'Clear all search history?')) {
       localStorage.removeItem(STORAGE_KEY);
       setQueries([]);
-      setCurrentPage(1);
     }
   };
 
-  // 分页逻辑
-  const totalPages = Math.ceil(queries.length / ITEMS_PER_PAGE);
-  const startIndex = (currentPage - 1) * ITEMS_PER_PAGE;
-  const currentItems = queries.slice(startIndex, startIndex + ITEMS_PER_PAGE);
-
-  const formatTimeAgo = (timestamp: number) => {
-    const diff = Math.floor((Date.now() - timestamp) / 1000);
-    if (diff < 60) return language === 'zh' ? '刚刚' : 'Just now';
-    const mins = Math.floor(diff / 60);
-    if (mins < 60) return language === 'zh' ? `${mins}m前` : `${mins}m ago`;
-    const hours = Math.floor(mins / 60);
-    return language === 'zh' ? `${hours}h前` : `${hours}h ago`;
-  };
-
-  if (!queries.length) return null;
+  if (queries.length === 0) return null;
 
   return (
-    <div className="space-y-4 animate-in fade-in duration-500">
-      {/* 头部统计与操作 */}
-      <div className="flex items-center justify-between border-b pb-2">
-        <div className="flex items-center gap-2 text-sm font-semibold">
+    <div className="w-full space-y-3 py-4 animate-in fade-in slide-in-from-bottom-2">
+      {/* Header */}
+      <div className="flex items-center justify-between px-1">
+        <div className="flex items-center gap-2">
           <Clock className="h-4 w-4 text-primary" />
-          <span>{language === 'zh' ? '最近查询' : 'Recent Queries'}</span>
-          <span className="text-xs font-normal text-muted-foreground bg-muted px-1.5 py-0.5 rounded">
-            {queries.length}
-          </span>
+          <h3 className="text-sm font-bold tracking-tight">
+            {language === 'zh' ? '最近查询' : 'Recent'} 
+            <span className="ml-2 text-xs font-normal text-muted-foreground">{queries.length}</span>
+          </h3>
         </div>
-        <Button
-          variant="ghost"
-          size="sm"
-          className="h-7 text-[10px] text-destructive hover:bg-destructive/10"
+        <Button 
+          variant="ghost" 
+          size="sm" 
           onClick={handleClearAll}
+          className="h-7 text-[11px] text-muted-foreground hover:text-destructive"
         >
-          <Trash2 className="h-3 w-3 mr-1" />
-          {language === 'zh' ? '清空' : 'Clear'}
+          {language === 'zh' ? '清空全部' : 'Clear All'}
         </Button>
       </div>
 
-      {/* 记录网格 */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-        {currentItems.map((query) => (
+      {/* 响应式容器：手机端横滑，桌面端网格 */}
+      <div 
+        ref={scrollRef}
+        className={cn(
+          "flex overflow-x-auto pb-2 gap-3 snap-x no-scrollbar", // 手机端
+          "md:grid md:grid-cols-2 lg:grid-cols-3 md:overflow-visible md:pb-0" // 桌面端
+        )}
+      >
+        {queries.map((query) => (
           <div
-            key={query.domain}
+            key={`${query.domain}-${query.timestamp}`}
             onClick={() => onSelectDomain(query.domain)}
-            className="group relative flex items-center gap-3 p-3 rounded-xl border bg-card hover:border-primary/50 hover:shadow-md transition-all cursor-pointer"
+            className={cn(
+              "relative flex-shrink-0 w-[240px] md:w-auto snap-start group",
+              "flex items-center gap-3 p-3 rounded-xl border bg-card/50 backdrop-blur-sm",
+              "hover:border-primary/40 hover:bg-accent/5 transition-all cursor-pointer shadow-sm"
+            )}
           >
-            <DomainFavicon domain={query.domain} size="sm" />
-            
-            <div className="flex-1 min-w-0 pr-6">
-              <div className="text-sm font-bold truncate group-hover:text-primary transition-colors">
-                {query.domain}
+            {/* Favicon Area */}
+            <div className="shrink-0 w-10 h-10 rounded-lg bg-background flex items-center justify-center border shadow-inner">
+              <DomainFavicon domain={query.domain} size="sm" />
+            </div>
+
+            {/* Info Area */}
+            <div className="flex-1 min-w-0">
+              <div className="flex items-center gap-1.5 mb-1">
+                <span className="text-sm font-bold truncate tracking-tight">{query.domain}</span>
+                <ChevronRight className="h-3 w-3 text-muted-foreground/50" />
               </div>
-              <div className="text-[10px] text-muted-foreground">
-                {formatTimeAgo(query.timestamp)}
+              
+              <div className="flex items-center gap-2">
+                {/* 状态徽章：严格区分 */}
+                {query.status === 'available' && (
+                  <Badge variant="secondary" className="bg-green-500/10 text-green-600 border-green-500/20 text-[10px] h-4 px-1 px-1.5 font-medium">
+                    <CheckCircle2 className="w-2.5 h-2.5 mr-1" />
+                    {language === 'zh' ? '未注册' : 'Available'}
+                  </Badge>
+                )}
+                {query.status === 'registered' && (
+                  <Badge variant="secondary" className="bg-amber-500/10 text-amber-600 border-amber-500/20 text-[10px] h-4 px-1.5 font-medium">
+                    <XCircle className="w-2.5 h-2.5 mr-1" />
+                    {language === 'zh' ? '已注册' : 'Registered'}
+                  </Badge>
+                )}
+                {query.status === 'failed' && (
+                  <Badge variant="secondary" className="bg-destructive/10 text-destructive border-destructive/20 text-[10px] h-4 px-1.5 font-medium">
+                    <AlertCircle className="w-2.5 h-2.5 mr-1" />
+                    {language === 'zh' ? '查询失败' : 'Failed'}
+                  </Badge>
+                )}
               </div>
             </div>
 
-            {/* 状态映射 */}
-            <div className="flex flex-col items-end gap-1">
-              <Badge
-                variant={query.status === 'available' ? 'default' : 'outline'}
-                className={`
-                  text-[9px] px-1.5 h-4 pointer-events-none capitalize
-                  ${query.status === 'registered' ? 'border-amber-500/50 text-amber-600' : ''}
-                  ${query.status === 'unknown' ? 'border-slate-300 text-slate-400' : ''}
-                `}
-              >
-                {query.status === 'unknown' && <AlertCircle className="w-2 h-2 mr-1" />}
-                {query.status === 'available' ? (language === 'zh' ? '未注册' : 'Available') : 
-                 query.status === 'registered' ? (language === 'zh' ? '已注册' : 'Registered') :
-                 (language === 'zh' ? '未知' : 'Unknown')}
-              </Badge>
-            </div>
-
+            {/* Delete Button */}
             <button
-              className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 p-1 text-muted-foreground hover:text-destructive transition-all"
               onClick={(e) => handleDelete(query.domain, e)}
+              className="absolute -top-1.5 -right-1.5 p-1.5 rounded-full bg-background border shadow-sm opacity-0 group-hover:opacity-100 md:group-hover:opacity-100 transition-opacity hover:bg-destructive hover:text-white"
             >
               <Trash2 className="h-3 w-3" />
             </button>
           </div>
         ))}
       </div>
-
-      {/* 分页控制 */}
-      {totalPages > 1 && (
-        <Pagination className="justify-end pt-2">
-          <PaginationContent>
-            <PaginationItem>
-              <Button 
-                variant="ghost" 
-                size="sm" 
-                disabled={currentPage === 1}
-                onClick={() => setCurrentPage(prev => Math.max(1, prev - 1))}
-              >
-                <ChevronLeft className="h-4 w-4" />
-              </Button>
-            </PaginationItem>
-            <PaginationItem>
-              <span className="text-xs text-muted-foreground px-2">
-                {currentPage} / {totalPages}
-              </span>
-            </PaginationItem>
-            <PaginationItem>
-              <Button 
-                variant="ghost" 
-                size="sm" 
-                disabled={currentPage === totalPages}
-                onClick={() => setCurrentPage(prev => Math.min(totalPages, prev + 1))}
-              >
-                <ChevronRight className="h-4 w-4" />
-              </Button>
-            </PaginationItem>
-          </PaginationContent>
-        </Pagination>
-      )}
     </div>
   );
 };
