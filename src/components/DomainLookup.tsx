@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { AlertCircle, Loader2, Star, CheckCircle } from 'lucide-react';
+import { AlertCircle, Loader2, Star, CheckCircle, Info } from 'lucide-react';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/hooks/useAuth';
 import { useToast } from '@/hooks/use-toast';
@@ -46,6 +46,7 @@ const DomainLookup = ({ initialDomain, onFavoriteAdded, onDomainQueried }: Domai
     if (initialDomain && !result && !loading && !error) {
       handleLookupWithDomain(initialDomain);
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const validateDomain = (input: string): boolean => {
@@ -55,25 +56,34 @@ const DomainLookup = ({ initialDomain, onFavoriteAdded, onDomainQueried }: Domai
 
   const checkIsFavorite = async (domainName: string) => {
     if (!user) return;
-    const { data } = await supabase
-      .from('favorites')
-      .select('id')
-      .eq('domain_name', domainName.toLowerCase())
-      .single();
-    setIsFavorite(!!data);
+    try {
+      const { data } = await supabase
+        .from('favorites')
+        .select('id')
+        .eq('domain_name', domainName.toLowerCase())
+        .single();
+      setIsFavorite(!!data);
+    } catch (e) {
+      setIsFavorite(false);
+    }
   };
 
   const saveToHistory = async (domainName: string, whoisData: WhoisData) => {
     if (!user) return;
-    await supabase.from('domain_history').insert({
-      user_id: user.id,
-      domain_name: domainName.toLowerCase(),
-      registrar: whoisData.registrar,
-      expiration_date: whoisData.expirationDate,
-      source: whoisData.source,
-    });
+    try {
+      await supabase.from('domain_history').insert({
+        user_id: user.id,
+        domain_name: domainName.toLowerCase(),
+        registrar: whoisData.registrar,
+        expiration_date: whoisData.expirationDate,
+        source: whoisData.source,
+      });
+    } catch (e) {
+      console.error('Failed to save to cloud history', e);
+    }
   };
 
+  // 增强的 ccTLD 判断
   const isCcTLD = (domain: string): boolean => {
     const tld = domain.split('.').pop()?.toLowerCase() || '';
     return tld.length === 2;
@@ -99,7 +109,7 @@ const DomainLookup = ({ initialDomain, onFavoriteAdded, onDomainQueried }: Domai
 
     const normalizedDomain = domainToLookup.trim().toLowerCase();
 
-    // 1. 缓存优先策略
+    // 1. 缓存层逻辑
     const cached = getFromCache(normalizedDomain);
     if (cached) {
       setResult(cached.whoisData);
@@ -107,8 +117,8 @@ const DomainLookup = ({ initialDomain, onFavoriteAdded, onDomainQueried }: Domai
       setFromCache(true);
       onDomainQueried?.(normalizedDomain);
       
-      // 记录缓存中的状态
-      addRecentQuery(normalizedDomain, cached.whoisData ? 'registered' : 'available');
+      // 增强：根据缓存数据更新三态查询记录
+      addRecentQuery(normalizedDomain, cached.isRegistered ? 'registered' : 'available');
       
       await checkIsFavorite(normalizedDomain);
       if (Date.now() - cached.timestamp > 10 * 60 * 1000) {
@@ -120,8 +130,8 @@ const DomainLookup = ({ initialDomain, onFavoriteAdded, onDomainQueried }: Domai
     setLoading(true);
 
     try {
-      // 2. 策略 A: 本地 RDAP 直接查询 (加速)
-      console.log(`[Lookup] Trying local RDAP for: ${normalizedDomain}`);
+      // 2. 策略一：本地浏览器直连 RDAP (高性能加速)
+      console.log(`[Lookup] Attempting local RDAP query for: ${normalizedDomain}`);
       const rdapResult = await queryRdapLocal(normalizedDomain);
       
       if (rdapResult.success && rdapResult.data) {
@@ -151,16 +161,19 @@ const DomainLookup = ({ initialDomain, onFavoriteAdded, onDomainQueried }: Domai
         };
         
         setResult(whoisData);
+        // 增强：添加最近查询记录 (已注册)
         addRecentQuery(normalizedDomain, 'registered');
-        saveToCache(normalizedDomain, whoisData, null, true);
         onDomainQueried?.(normalizedDomain);
+        
+        saveToCache(normalizedDomain, whoisData, null, true);
+        fetchPricingAsync(normalizedDomain, whoisData);
         await saveToHistory(normalizedDomain, whoisData);
         await checkIsFavorite(normalizedDomain);
-        fetchPricingAsync(normalizedDomain, whoisData);
         setLoading(false);
         return;
       }
-      
+
+      // 如果 RDAP 判定未注册
       if (rdapResult.isAvailable) {
         setIsAvailable(true);
         addRecentQuery(normalizedDomain, 'available');
@@ -169,16 +182,19 @@ const DomainLookup = ({ initialDomain, onFavoriteAdded, onDomainQueried }: Domai
         return;
       }
 
-      // 3. 策略 B: 云端 Edge Function 兜底 (处理非 CORS 或传统 WHOIS)
-      console.log(`[Lookup] Falling back to cloud for: ${normalizedDomain}`);
+      // 3. 策略二：云端 Edge Function 兜底查询 (应对复杂后缀)
+      console.log(`[Lookup] Local RDAP failed, falling back to cloud: ${normalizedDomain}`);
+      const skipInitialPricing = isCcTLD(normalizedDomain);
+      
       const { data, error: fnError } = await supabase.functions.invoke('domain-lookup', {
         body: { 
           domain: normalizedDomain,
-          skipPricing: isCcTLD(normalizedDomain), 
+          skipPricing: skipInitialPricing,
         }
       });
 
       if (fnError) {
+        console.error('Edge function error:', fnError);
         setError(t('error.serviceUnavailable'));
         addRecentQuery(normalizedDomain, 'failed');
         setLoading(false);
@@ -198,6 +214,7 @@ const DomainLookup = ({ initialDomain, onFavoriteAdded, onDomainQueried }: Domai
       }
 
       if (data.primary) {
+        // 详尽的数据映射，确保不丢失标签信息
         const whoisData: WhoisData = {
           domain: data.primary.domain,
           registrar: data.primary.registrar || 'N/A',
@@ -209,7 +226,7 @@ const DomainLookup = ({ initialDomain, onFavoriteAdded, onDomainQueried }: Domai
           statusTranslated: data.primary.statusTranslated || [],
           registrant: data.primary.registrant,
           dnssec: data.primary.dnssec || false,
-          source: data.primary.source,
+          source: data.primary.source || 'whois',
           registrarWebsite: data.primary.registrarWebsite,
           registrarIanaId: data.primary.registrarIanaId,
           dnsProvider: data.primary.dnsProvider,
@@ -224,8 +241,8 @@ const DomainLookup = ({ initialDomain, onFavoriteAdded, onDomainQueried }: Domai
         };
         
         setResult(whoisData);
-        addRecentQuery(normalizedDomain, 'registered');
         
+        // 分离定价逻辑
         if (data.pricing) {
           setPricing(data.pricing);
           saveToCache(normalizedDomain, whoisData, data.pricing, true);
@@ -235,6 +252,8 @@ const DomainLookup = ({ initialDomain, onFavoriteAdded, onDomainQueried }: Domai
         }
         
         onDomainQueried?.(normalizedDomain);
+        addRecentQuery(normalizedDomain, 'registered');
+        
         await saveToHistory(normalizedDomain, whoisData);
         await checkIsFavorite(normalizedDomain);
       } else {
@@ -242,6 +261,7 @@ const DomainLookup = ({ initialDomain, onFavoriteAdded, onDomainQueried }: Domai
         addRecentQuery(normalizedDomain, 'failed');
       }
     } catch (err) {
+      console.error('Lookup error:', err);
       setError(t('error.queryFailed'));
       addRecentQuery(normalizedDomain, 'failed');
     } finally {
@@ -253,14 +273,18 @@ const DomainLookup = ({ initialDomain, onFavoriteAdded, onDomainQueried }: Domai
     setPricingLoading(true);
     try {
       const { data } = await supabase.functions.invoke('domain-lookup', {
-        body: { domain: domainName, pricingOnly: true }
+        body: { 
+          domain: domainName,
+          pricingOnly: true,
+        }
       });
+      
       if (data?.pricing) {
         setPricing(data.pricing);
         saveToCache(domainName, whoisData, data.pricing, true);
       }
     } catch (e) {
-      console.error('Pricing failed', e);
+      console.log('Pricing fetch failed:', e);
     } finally {
       setPricingLoading(false);
     }
@@ -271,8 +295,9 @@ const DomainLookup = ({ initialDomain, onFavoriteAdded, onDomainQueried }: Domai
       const { data } = await supabase.functions.invoke('domain-lookup', {
         body: { domain: domainName }
       });
+      
       if (data?.primary) {
-        const freshWhois: WhoisData = {
+        const whoisData: WhoisData = {
           domain: data.primary.domain,
           registrar: data.primary.registrar || 'N/A',
           registrationDate: data.primary.registrationDate || 'N/A',
@@ -283,7 +308,7 @@ const DomainLookup = ({ initialDomain, onFavoriteAdded, onDomainQueried }: Domai
           statusTranslated: data.primary.statusTranslated || [],
           registrant: data.primary.registrant,
           dnssec: data.primary.dnssec || false,
-          source: data.primary.source,
+          source: data.primary.source || 'rdap',
           registrarWebsite: data.primary.registrarWebsite,
           registrarIanaId: data.primary.registrarIanaId,
           dnsProvider: data.primary.dnsProvider,
@@ -296,15 +321,15 @@ const DomainLookup = ({ initialDomain, onFavoriteAdded, onDomainQueried }: Domai
           lastUpdatedFormatted: data.primary.lastUpdatedFormatted,
           rawData: data.primary.rawData,
         };
-        saveToCache(domainName, freshWhois, data.pricing || null, true);
+        saveToCache(domainName, whoisData, data.pricing || null, true);
       }
     } catch (e) {
-      console.log('Background sync failed', e);
+      console.log('Background refresh failed:', e);
     }
   };
 
   const handleLookup = async () => {
-    // 智能后缀补全逻辑
+    // 调用更新后的智能补全逻辑：不画蛇添足
     const completedDomain = autoCompleteDomain(domain);
     if (completedDomain !== domain) {
       setDomain(completedDomain);
@@ -317,10 +342,17 @@ const DomainLookup = ({ initialDomain, onFavoriteAdded, onDomainQueried }: Domai
       toast({ description: t('error.loginRequired'), variant: 'destructive' });
       return;
     }
+
     setFavoriteLoading(true);
+
     try {
       if (isFavorite) {
-        await supabase.from('favorites').delete().eq('user_id', user.id).eq('domain_name', result.domain.toLowerCase());
+        await supabase
+          .from('favorites')
+          .delete()
+          .eq('user_id', user.id)
+          .eq('domain_name', result.domain.toLowerCase());
+        
         setIsFavorite(false);
         toast({ description: t('favorites.remove') });
       } else {
@@ -330,11 +362,13 @@ const DomainLookup = ({ initialDomain, onFavoriteAdded, onDomainQueried }: Domai
           registrar: result.registrar,
           expiration_date: result.expirationDate,
         });
+        
         setIsFavorite(true);
         toast({ description: t('favorites.addSuccess') });
         onFavoriteAdded?.();
       }
     } catch (err) {
+      console.error('Favorite error:', err);
       toast({ description: t('error.operationFailed'), variant: 'destructive' });
     } finally {
       setFavoriteLoading(false);
@@ -345,21 +379,39 @@ const DomainLookup = ({ initialDomain, onFavoriteAdded, onDomainQueried }: Domai
 
   return (
     <div className="w-full space-y-4">
-      <DomainSearch domain={domain} setDomain={setDomain} onSearch={handleLookup} loading={loading} />
+      <DomainSearch
+        domain={domain}
+        setDomain={setDomain}
+        onSearch={handleLookup}
+        loading={loading}
+      />
 
       {showResultArea && (
         <div className="min-h-[300px]">
           {error && !loading && (
             <div className={`flex items-start gap-3 p-3 border rounded-lg animate-in fade-in-0 duration-300 ${
-              isAvailable ? 'border-success/20 bg-success/5' : 'border-destructive/20 bg-destructive/5'
+              isAvailable 
+                ? 'border-success/20 bg-success/5' 
+                : 'border-destructive/20 bg-destructive/5'
             }`}>
-              {isAvailable ? <CheckCircle className="h-4 w-4 text-success mt-0.5" /> : <AlertCircle className="h-4 w-4 text-destructive mt-0.5" />}
+              {isAvailable ? (
+                <CheckCircle className="h-4 w-4 text-success flex-shrink-0 mt-0.5" />
+              ) : (
+                <AlertCircle className="h-4 w-4 text-destructive flex-shrink-0 mt-0.5" />
+              )}
               <div className="flex-1">
-                <p className={`text-sm ${isAvailable ? 'text-success' : 'text-destructive'}`}>{error}</p>
+                <p className={`text-sm ${isAvailable ? 'text-success' : 'text-destructive'}`}>
+                  {error}
+                </p>
                 {isAvailable && (
                   <div className="flex items-center gap-2 mt-1.5">
-                    <Badge variant="outline" className="text-success border-success text-xs">{t('pricing.available')}</Badge>
-                    <span className="text-xs text-muted-foreground">{language === 'zh' ? '溢价: 未知' : 'Premium: Unknown'}</span>
+                    <Badge variant="outline" className="text-success border-success text-xs">
+                      {t('pricing.available')}
+                    </Badge>
+                    <span className="text-xs text-muted-foreground flex items-center gap-1">
+                      <Info className="w-3 h-3" />
+                      {language === 'zh' ? '溢价状态: 以实际购买为准' : 'Premium: Subject to registry'}
+                    </span>
                   </div>
                 )}
               </div>
@@ -369,7 +421,9 @@ const DomainLookup = ({ initialDomain, onFavoriteAdded, onDomainQueried }: Domai
           {loading && (
             <div className="flex flex-col items-center justify-center py-16">
               <Loader2 className="h-8 w-8 animate-spin text-primary mb-3" />
-              <p className="text-sm text-muted-foreground">{t('misc.loading')}</p>
+              <p className="text-sm text-muted-foreground">
+                {t('misc.loading')}
+              </p>
             </div>
           )}
 
@@ -377,15 +431,29 @@ const DomainLookup = ({ initialDomain, onFavoriteAdded, onDomainQueried }: Domai
             <div className="space-y-3 animate-in fade-in-0 slide-in-from-bottom-2 duration-300">
               {user && (
                 <div className="flex items-center justify-between">
-                  {fromCache && <span className="text-xs text-muted-foreground">⚡ {language === 'zh' ? '来自缓存' : 'From cache'}</span>}
+                  {fromCache && (
+                    <span className="text-xs text-muted-foreground">
+                      ⚡ {language === 'zh' ? '来自缓存' : 'From cache'}
+                    </span>
+                  )}
                   <div className="flex-1" />
-                  <Button variant={isFavorite ? "default" : "outline"} size="sm" onClick={toggleFavorite} disabled={favoriteLoading} className="gap-1.5 h-8 text-xs">
+                  <Button
+                    variant={isFavorite ? "default" : "outline"}
+                    size="sm"
+                    onClick={toggleFavorite}
+                    disabled={favoriteLoading}
+                    className="gap-1.5 h-8 text-xs"
+                  >
                     <Star className={`h-3.5 w-3.5 ${isFavorite ? 'fill-current' : ''}`} />
                     {isFavorite ? t('favorites.added') : t('favorites.add')}
                   </Button>
                 </div>
               )}
-              <DomainResultCard data={result} pricing={pricing} pricingLoading={pricingLoading} />
+              <DomainResultCard 
+                data={result} 
+                pricing={pricing} 
+                pricingLoading={pricingLoading}
+              />
             </div>
           )}
         </div>
