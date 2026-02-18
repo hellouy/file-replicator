@@ -188,31 +188,16 @@ const DomainLookup = ({ initialDomain, onFavoriteAdded, onDomainQueried }: Domai
       // 策略2: RDAP 失败或 CORS 阻断，回退到云端查询 (RDAP+WHOIS)
       const fallbackReason = rdapResult.corsBlocked ? 'CORS blocked' : 'RDAP failed';
       console.log(`[Domain] ${fallbackReason}, falling back to cloud query`);
-
-      let data: any;
-      try {
-        const response = await supabase.functions.invoke('domain-lookup', {
-          body: {
-            domain: normalizedDomain,
-            skipPricing: isCcTLD(normalizedDomain), // ccTLD 跳过价格以加速
-          }
-        });
-
-        if (response.error) {
-          console.error('Edge function error:', response.error);
-          setError(t('error.serviceUnavailable'));
-          setLoading(false);
-          return;
+      
+      const { data, error: fnError } = await supabase.functions.invoke('domain-lookup', {
+        body: { 
+          domain: normalizedDomain,
+          skipPricing: isCcTLD(normalizedDomain), // ccTLD 跳过价格以加速
         }
+      });
 
-        data = response.data;
-        if (!data) {
-          setError(t('error.serviceUnavailable'));
-          setLoading(false);
-          return;
-        }
-      } catch (invokeError) {
-        console.error('Function invoke error:', invokeError);
+      if (fnError) {
+        console.error('Edge function error:', fnError);
         setError(t('error.serviceUnavailable'));
         setLoading(false);
         return;
@@ -284,20 +269,13 @@ const DomainLookup = ({ initialDomain, onFavoriteAdded, onDomainQueried }: Domai
   const fetchPricingAsync = async (domainName: string, whoisData: WhoisData) => {
     setPricingLoading(true);
     try {
-      const response = await supabase.functions.invoke('domain-lookup', {
-        body: {
+      const { data } = await supabase.functions.invoke('domain-lookup', {
+        body: { 
           domain: domainName,
           pricingOnly: true,
         }
       });
-
-      if (response.error) {
-        console.log('Pricing fetch error:', response.error);
-        setPricingLoading(false);
-        return;
-      }
-
-      const data = response.data;
+      
       if (data?.pricing) {
         setPricing(data.pricing);
         saveToCache(domainName, whoisData, data.pricing, true);
