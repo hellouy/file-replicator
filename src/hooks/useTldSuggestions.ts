@@ -111,22 +111,24 @@ export const useTldSuggestions = () => {
   return { allTlds, getSuggestions, loading };
 };
 
-// Utility to auto-complete domain: if has dot and non-empty suffix (supports IDN like .台湾), keep as is; else append .com
+// Utility to auto-complete domain with .com if no TLD
 export const autoCompleteDomain = (input: string, allTlds: string[]): string => {
-  const trimmed = input.trim();
+  const trimmed = input.trim().toLowerCase();
   if (!trimmed) return '';
-
+  
+  // Check if already has a valid TLD
   if (trimmed.includes('.')) {
     const parts = trimmed.split('.');
     const lastPart = parts[parts.length - 1];
     
-    // As long as there's any non-empty suffix after the dot, treat as complete domain
-    if (lastPart.length > 0) {
+    // Check if the last part is a valid TLD
+    if (allTlds.includes(lastPart)) {
       return trimmed;
     }
   }
-
-  // No valid suffix - append .com (remove trailing dot if present)
+  
+  // No TLD or invalid TLD - append .com
+  // Remove trailing dot if exists
   const cleanInput = trimmed.replace(/\.$/, '');
   return `${cleanInput}.com`;
 };

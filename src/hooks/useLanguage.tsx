@@ -12,12 +12,12 @@ const translations: Record<Language, Record<string, string>> = {
   zh: {
     // Header
     'app.title': 'RDAP 域名查询',
-    'app.description': '可以输入域名或 IDN。我们将为你查询域名状态、且规范化整理信息显示。如果 RDAP 不可用，将回退到 WHOIS。',
+    'app.description': '输入域名或 IDN。我们将验证、规范化整理信息显示。如果 RDAP 不可用，将回退到 WHOIS。',
     'app.login': '登录',
     'app.logout': '退出登录',
     
     // Search
-    'search.placeholder': '输入域名 （如l.ke 或 nic.rw)',
+    'search.placeholder': '输入域名 (如 example.com)',
     'search.button': '查询',
     'search.searching': '查询中...',
     
@@ -120,7 +120,7 @@ const translations: Record<Language, Record<string, string>> = {
     'auth.registerSuccess': '注册成功，请检查邮箱完成验证',
     
     // Footer
-    'footer.copyright': '© 2026 不讲·李 Domain Lookup',
+    'footer.copyright': '© 2026 RDAP Domain Lookup',
     'footer.about': '关于我',
     'footer.register': '域名注册',
     'footer.shortlink': '短链接',

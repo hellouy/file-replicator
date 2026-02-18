@@ -11,7 +11,6 @@ import { Badge } from '@/components/ui/badge';
 import { addRecentQuery } from './RecentQueries';
 import { getFromCache, saveToCache } from '@/hooks/useQueryCache';
 import { useTldSuggestions, autoCompleteDomain } from '@/hooks/useTldSuggestions';
-import { queryRdapLocal, hasRdapSupport } from '@/services/rdapService';
 
 interface DomainLookupProps {
   initialDomain?: string;
@@ -115,9 +114,9 @@ const DomainLookup = ({ initialDomain, onFavoriteAdded, onDomainQueried }: Domai
       addRecentQuery(normalizedDomain, cached.isRegistered);
       await checkIsFavorite(normalizedDomain);
       
-      // Optionally refresh in background for old cache
+      // Optionally refresh in background for ccTLD or old cache
       const cacheAge = Date.now() - cached.timestamp;
-      if (cacheAge > 10 * 60 * 1000) {
+      if (cacheAge > 10 * 60 * 1000) { // Refresh if > 10 min old
         refreshInBackground(normalizedDomain);
       }
       return;
@@ -126,80 +125,19 @@ const DomainLookup = ({ initialDomain, onFavoriteAdded, onDomainQueried }: Domai
     setLoading(true);
 
     try {
-      const tld = normalizedDomain.split('.').pop()?.toLowerCase() || '';
-      
-      // 策略1: 先尝试本地 RDAP 查询 (直接HTTP，无需云端)
-      console.log(`[Domain] Starting local RDAP query for ${normalizedDomain}`);
-      const rdapResult = await queryRdapLocal(normalizedDomain);
-      
-      if (rdapResult.success && rdapResult.data) {
-        console.log(`[Domain] Local RDAP success in ${rdapResult.queryTime}ms`);
-        
-        const whoisData: WhoisData = {
-          domain: rdapResult.data.domain || normalizedDomain,
-          registrar: rdapResult.data.registrar || 'N/A',
-          registrationDate: rdapResult.data.registrationDate || 'N/A',
-          expirationDate: rdapResult.data.expirationDate || 'N/A',
-          lastUpdated: rdapResult.data.lastUpdated || 'N/A',
-          nameServers: rdapResult.data.nameServers || [],
-          status: rdapResult.data.status || [],
-          statusTranslated: rdapResult.data.statusTranslated || [],
-          registrant: rdapResult.data.registrant,
-          dnssec: rdapResult.data.dnssec || false,
-          source: 'rdap',
-          registrarWebsite: rdapResult.data.registrarWebsite,
-          registrarIanaId: rdapResult.data.registrarIanaId,
-          dnsProvider: rdapResult.data.dnsProvider,
-          privacyProtection: rdapResult.data.privacyProtection,
-          ageLabel: rdapResult.data.ageLabel,
-          updateLabel: rdapResult.data.updateLabel,
-          remainingDays: rdapResult.data.remainingDays,
-          registrationDateFormatted: rdapResult.data.registrationDateFormatted,
-          expirationDateFormatted: rdapResult.data.expirationDateFormatted,
-          lastUpdatedFormatted: rdapResult.data.lastUpdatedFormatted,
-          rawData: rdapResult.data.rawData,
-        };
-        
-        setResult(whoisData);
-        saveToCache(normalizedDomain, whoisData, null, true);
-        onDomainQueried?.(normalizedDomain);
-        addRecentQuery(normalizedDomain, true);
-        
-        await saveToHistory(normalizedDomain, whoisData);
-        await checkIsFavorite(normalizedDomain);
-        
-        // 异步获取价格信息
-        fetchPricingAsync(normalizedDomain, whoisData);
-        setLoading(false);
-        return;
-      }
-      
-      // RDAP 返回域名未注册
-      if (rdapResult.isAvailable) {
-        setIsAvailable(true);
-        addRecentQuery(normalizedDomain, false);
-        setError(language === 'zh' 
-          ? `域名 ${normalizedDomain} 未注册，可以注册` 
-          : `Domain ${normalizedDomain} is available for registration`);
-        setLoading(false);
-        return;
-      }
-      
-      // 策略2: RDAP 失败或 CORS 阻断，回退到云端查询 (RDAP+WHOIS)
-      const fallbackReason = rdapResult.corsBlocked ? 'CORS blocked' : 'RDAP failed';
-      console.log(`[Domain] ${fallbackReason}, falling back to cloud query`);
+      // For ccTLD domains, skip pricing initially for faster response
+      const skipInitialPricing = isCcTLD(normalizedDomain);
       
       const { data, error: fnError } = await supabase.functions.invoke('domain-lookup', {
         body: { 
           domain: normalizedDomain,
-          skipPricing: isCcTLD(normalizedDomain), // ccTLD 跳过价格以加速
+          skipPricing: skipInitialPricing,
         }
       });
 
       if (fnError) {
         console.error('Edge function error:', fnError);
         setError(t('error.serviceUnavailable'));
-        setLoading(false);
         return;
       }
 
@@ -209,7 +147,6 @@ const DomainLookup = ({ initialDomain, onFavoriteAdded, onDomainQueried }: Domai
           addRecentQuery(normalizedDomain, false);
         }
         setError(data.error);
-        setLoading(false);
         return;
       }
 
@@ -244,9 +181,12 @@ const DomainLookup = ({ initialDomain, onFavoriteAdded, onDomainQueried }: Domai
         if (data.pricing) {
           setPricing(data.pricing);
           saveToCache(normalizedDomain, whoisData, data.pricing, true);
-        } else {
+        } else if (skipInitialPricing) {
+          // Fetch pricing in background for ccTLD
           saveToCache(normalizedDomain, whoisData, null, true);
           fetchPricingAsync(normalizedDomain, whoisData);
+        } else {
+          saveToCache(normalizedDomain, whoisData, null, true);
         }
         
         onDomainQueried?.(normalizedDomain);

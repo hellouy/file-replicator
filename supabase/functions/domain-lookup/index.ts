@@ -16,80 +16,27 @@ let whoisServerCache: Record<string, string> = {};
 let whoisCacheTime = 0;
 const WHOIS_CACHE_TTL = 3600000; // 1 hour
 
-// 已知不可用/超慢的 WHOIS 服务器 - 跳过这些直接用 RDAP 或 HTTP 兜底
+// 已知不可用/超慢的 WHOIS 服务器 - 跳过这些直接用 HTTP 兜底
 const SLOW_WHOIS_SERVERS = new Set([
-  // 中东/非洲问题服务器
-  'whois.pnina.ps',    // .ps - 连接被拒绝
-  'whois.nic.ps',      // .ps - 备用
+  'whois.pnina.ps',    // .ps - 经常连接被拒绝
+  'whois.nic.ps',
   'whois.nic.mm',      // .mm - 缅甸，超慢
   'whois.nic.ir',      // .ir - 伊朗，不稳定
   'whois.nic.kp',      // .kp - 朝鲜，不可达
   'whois.nic.cu',      // .cu - 古巴，不稳定
   'whois.nic.sy',      // .sy - 叙利亚，不稳定
-  'whois.nic.ly',      // .ly - 利比亚，不稳定
-  'whois.nic.sd',      // .sd - 苏丹，不稳定
-  'whois.nic.ye',      // .ye - 也门，不稳定
-  // 亚洲问题服务器
-  'whois.nic.lk',      // .lk - 斯里兰卡，超慢
-  'whois.nic.bd',      // .bd - 孟加拉，慢
-  'whois.nic.np',      // .np - 尼泊尔，慢
-  'whois.nic.af',      // .af - 阿富汗，不可达
-  'whois.nic.bt',      // .bt - 不丹，慢
-  // 非洲问题服务器
-  'whois.nic.ng',      // .ng - 尼日利亚，不稳定（备用服务器）
-  'whois.nic.kn',      // .kn - 圣基茨，慢
-  'whois.nic.gw',      // .gw - 几内亚比绍，不可达
-  'whois.nic.gn',      // .gn - 几内亚，不可达
-  'whois.nic.ml',      // .ml - 马里，慢
-  'whois.nic.bf',      // .bf - 布基纳法索，慢
-  'whois.nic.ne',      // .ne - 尼日尔，慢
-  'whois.nic.td',      // .td - 乍得，不可达
-  'whois.nic.cf',      // .cf - 中非，不可达
-  'whois.nic.cg',      // .cg - 刚果，慢
-  'whois.nic.cd',      // .cd - 刚果民主，慢
-  'whois.nic.ao',      // .ao - 安哥拉，慢
-  'whois.nic.mz',      // .mz - 莫桑比克，慢
-  'whois.nic.zw',      // .zw - 津巴布韦，慢
-  'whois.nic.et',      // .et - 埃塞俄比亚，慢
-  'whois.nic.er',      // .er - 厄立特里亚，不可达
-  'whois.nic.so',      // .so - 索马里，不可达
-  // 太平洋岛国问题服务器
-  'whois.nic.ki',      // .ki - 基里巴斯，慢
-  'whois.nic.nr',      // .nr - 瑙鲁，慢
-  'whois.nic.tv',      // .tv - 图瓦卢，有时慢
-  'whois.nic.vu',      // .vu - 瓦努阿图，慢
-  'whois.nic.sb',      // .sb - 所罗门群岛，慢
-  'whois.nic.pg',      // .pg - 巴布亚新几内亚，慢
 ]);
 
-// 快速 WHOIS 服务器 (响应通常 <2s) - 使用更短超时
+// 快速 WHOIS 服务器 (响应通常 <2s)
 const FAST_WHOIS_SERVERS = new Set([
-  // 顶级gTLD服务器
-  'whois.verisign-grs.com',  // .com/.net
-  'whois.pir.org',           // .org
-  'whois.nic.google',        // Google TLDs
-  'whois.cloudflare.com',    // Cloudflare
-  // 常见ccTLD快速服务器
+  'whois.verisign-grs.com',
   'whois.nic.io',
   'whois.nic.co',
   'whois.nic.ai',
   'whois.nic.me',
-  'whois.nic.net.ng',
-  'whois.afilias.net',
-  'whois.nic.uk',
-  'whois.nic.fr',
-  'whois.denic.de',
-  'whois.nic.ch',
-  'whois.sidn.nl',
-  'whois.nic.it',
-  'whois.jprs.jp',
-  'whois.kr',
-  'whois.twnic.net.tw',
-  'whois.hkirc.hk',
-  'whois.cnnic.cn',
-  'whois.auda.org.au',
-  'whois.cira.ca',
-  'whois.registro.br',
+  'whois.pir.org',
+  'whois.nic.google',
+  'whois.cloudflare.com',
 ]);
 
 // ==================== 完整的域名状态码映射 (支持多语言) ====================
@@ -1214,7 +1161,7 @@ function isCcTld(tld: string): boolean {
   return tld.length === 2 && /^[a-z]{2}$/.test(tld.toLowerCase());
 }
 
-// 通过 TCP 端口 43 查询 WHOIS - 连接稳定性增强版
+// 通过 TCP 端口 43 查询 WHOIS - 速度优化版
 async function queryWhoisTcp(domain: string, server: string, timeout = 8000, queryFormat?: string): Promise<string | null> {
   // 跳过已知超慢/不可用的服务器
   if (SLOW_WHOIS_SERVERS.has(server)) {
@@ -1223,14 +1170,18 @@ async function queryWhoisTcp(domain: string, server: string, timeout = 8000, que
   }
   
   // 快速服务器使用更短超时
-  const effectiveTimeout = FAST_WHOIS_SERVERS.has(server) ? 4000 : Math.min(timeout, 6000);
+  const effectiveTimeout = FAST_WHOIS_SERVERS.has(server) ? 5000 : timeout;
   
   try {
     const query = queryFormat ? queryFormat.replace('%s', domain) : domain;
     console.log(`Querying WHOIS via TCP: ${server}:43 for ${domain} (timeout: ${effectiveTimeout}ms)`);
     
-    // 使用 Promise.race 实现连接超时
-    const connectPromise = Deno.connect({ hostname: server, port: 43 });
+    // 使用 Promise.race 实现超时
+    const connectPromise = Deno.connect({
+      hostname: server,
+      port: 43,
+    });
+    
     const timeoutPromise = new Promise<never>((_, reject) => {
       setTimeout(() => reject(new Error('Connection timeout')), effectiveTimeout);
     });
@@ -1243,31 +1194,31 @@ async function queryWhoisTcp(domain: string, server: string, timeout = 8000, que
       return null;
     }
     
-    // 设置读取超时 - 比连接超时短，避免悬挂
-    const readTimeout = effectiveTimeout;
+    // 设置读取超时 (比连接超时稍长)
     const readTimeoutId = setTimeout(() => {
       try { conn.close(); } catch {}
-    }, readTimeout);
+    }, effectiveTimeout + 2000);
     
     // 发送查询
     const encoder = new TextEncoder();
-    await conn.write(encoder.encode(`${query}\r\n`));
+    const fullQuery = `${query}\r\n`;
+    await conn.write(encoder.encode(fullQuery));
     
     // 读取响应 - 使用更大的缓冲区减少读取次数
     const decoder = new TextDecoder('utf-8', { fatal: false });
     const chunks: string[] = [];
-    const buffer = new Uint8Array(32768); // 32KB 缓冲区
+    const buffer = new Uint8Array(16384); // 16KB 缓冲区
     
     try {
       while (true) {
         const bytesRead = await conn.read(buffer);
         if (bytesRead === null) break;
         chunks.push(decoder.decode(buffer.subarray(0, bytesRead), { stream: true }));
-        // 获取足够数据后提前退出
+        // 如果已经获取足够数据(>10KB)，提前退出
         const totalLen = chunks.reduce((a, b) => a + b.length, 0);
-        if (totalLen > 8000) break;
+        if (totalLen > 10000) break;
       }
-    } catch {
+    } catch (e) {
       // 连接关闭或读取完成
     }
     
@@ -1291,15 +1242,20 @@ async function queryWhoisTcp(domain: string, server: string, timeout = 8000, que
 async function queryWhoisWithFormats(domain: string, server: string, tld: string): Promise<string | null> {
   const formats = CCTLD_QUERY_FORMATS[tld] || ['%s'];
   
-  // 只尝试第一种格式
-  const response = await queryWhoisTcp(domain, server, 6000, formats[0]);
+  // 只尝试第一种格式，减少等待时间
+  const format = formats[0];
+  const response = await queryWhoisTcp(domain, server, 8000, format);
   
-  if (response && response.length > 50) return response;
+  if (response && response.length > 50) {
+    return response;
+  }
   
   // 如果第一种格式失败且有其他格式，快速尝试
   if (formats.length > 1 && !response) {
-    const response2 = await queryWhoisTcp(domain, server, 4000, formats[1]);
-    if (response2 && response2.length > 50) return response2;
+    const response2 = await queryWhoisTcp(domain, server, 5000, formats[1]);
+    if (response2 && response2.length > 50) {
+      return response2;
+    }
   }
   
   return null;
@@ -2055,7 +2011,7 @@ async function queryWhois(domain: string): Promise<any> {
     // 对于 ccTLD，使用多格式查询
     const tcpResponse = isCctld 
       ? await queryWhoisWithFormats(domain, whoisServer, tld)
-      : await queryWhoisTcp(domain, whoisServer, 8000);
+      : await queryWhoisTcp(domain, whoisServer, 15000);
     
     if (tcpResponse) {
       const parsed = parseWhoisText(tcpResponse, domain);
@@ -2118,7 +2074,7 @@ async function queryWhois(domain: string): Promise<any> {
     const tldServers = gTldServers[tld] || ['whois.verisign-grs.com', 'whois.internic.net'];
     
     for (const server of tldServers) {
-      const tcpResponse = await queryWhoisTcp(domain, server, 8000);
+      const tcpResponse = await queryWhoisTcp(domain, server, 15000);
       if (tcpResponse) {
         // 检查是否有重定向信息
         const referMatch = tcpResponse.match(/Registrar WHOIS Server:\s*(\S+)/i) ||
@@ -2128,7 +2084,7 @@ async function queryWhois(domain: string): Promise<any> {
         if (referMatch && referMatch[1]) {
           const referServer = referMatch[1].trim();
           console.log(`Found referral WHOIS server: ${referServer}`);
-          const referResponse = await queryWhoisTcp(domain, referServer, 6000);
+          const referResponse = await queryWhoisTcp(domain, referServer, 15000);
           if (referResponse) {
             const parsed = parseWhoisText(referResponse, domain);
             if (parsed.registrar || parsed.registrationDate) {
@@ -2530,7 +2486,7 @@ serve(async (req) => {
   }
 
   try {
-    const { domain, skipPricing, pricingOnly } = await req.json();
+    const { domain } = await req.json();
     
     if (!domain) {
       return new Response(
@@ -2549,31 +2505,21 @@ serve(async (req) => {
       );
     }
     
-    // 仅查询价格
-    if (pricingOnly) {
-      const pricing = await queryPricing(normalizedDomain);
-      return new Response(
-        JSON.stringify({ pricing }),
-        { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
-    }
-    
     console.log(`Looking up domain: ${normalizedDomain}`);
     const tld = getTld(normalizedDomain);
     const startTime = Date.now();
     
     // 并行查询价格和域名信息
-    const promises: [Promise<any>, Promise<any>] = [
+    const [queryResult, pricingResult] = await Promise.all([
       smartDomainQuery(normalizedDomain, tld),
-      skipPricing ? Promise.resolve(null) : queryPricing(normalizedDomain)
-    ];
-    
-    const [queryResult, pricingResult] = await Promise.all(promises);
+      queryPricing(normalizedDomain)
+    ]);
     
     const elapsed = Date.now() - startTime;
     console.log(`Query completed in ${elapsed}ms`);
     
     if (!queryResult) {
+      // 域名不存在或查询失败
       return new Response(
         JSON.stringify({ 
           error: `域名 ${normalizedDomain} 未注册或无法查询`,
@@ -2585,14 +2531,18 @@ serve(async (req) => {
       );
     }
     
+    const result = {
+      primary: queryResult.data,
+      pricing: pricingResult,
+      isRegistered: true,
+      querySource: queryResult.source,
+      queryTime: elapsed,
+    };
+    
+    console.log(`Domain lookup successful via ${queryResult.source} in ${elapsed}ms`);
+    
     return new Response(
-      JSON.stringify({
-        primary: queryResult.data,
-        pricing: pricingResult,
-        isRegistered: true,
-        querySource: queryResult.source,
-        queryTime: elapsed,
-      }),
+      JSON.stringify(result),
       { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     );
     
