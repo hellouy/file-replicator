@@ -25,6 +25,7 @@ const SLOW_WHOIS_SERVERS = new Set([
   'whois.nic.kp',      // .kp - 朝鲜，不可达
   'whois.nic.cu',      // .cu - 古巴，不稳定
   'whois.nic.sy',      // .sy - 叙利亚，不稳定
+  'whois.nic.td',
 ]);
 
 // 快速 WHOIS 服务器 (响应通常 <2s)
