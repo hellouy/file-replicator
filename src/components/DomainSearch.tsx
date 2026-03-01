@@ -54,7 +54,7 @@ const DomainSearch = ({ domain, setDomain, onSearch, loading }: DomainSearchProp
     if (!domain.trim()) return;
     
     // Auto-complete with .com if no valid TLD
-    const completedDomain = autoCompleteDomain(domain, allTlds);
+    const completedDomain = autoCompleteDomain(domain);
     if (completedDomain !== domain) {
       setDomain(completedDomain);
     }

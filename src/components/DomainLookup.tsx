@@ -269,7 +269,7 @@ const DomainLookup = ({ initialDomain, onFavoriteAdded, onDomainQueried }: Domai
 
   const handleLookup = async () => {
     // Auto-complete with .com if no valid TLD
-    const completedDomain = autoCompleteDomain(domain, allTlds);
+    const completedDomain = autoCompleteDomain(domain);
     if (completedDomain !== domain) {
       setDomain(completedDomain);
     }
@@ -330,30 +330,45 @@ const DomainLookup = ({ initialDomain, onFavoriteAdded, onDomainQueried }: Domai
       {showResultArea && (
         <div className="min-h-[300px]">
           {error && !loading && (
-            <div className={`flex items-start gap-3 p-3 border rounded-lg animate-in fade-in-0 duration-300 ${
+            <div className={`rounded-xl animate-in fade-in-0 slide-in-from-bottom-2 duration-300 overflow-hidden ${
               isAvailable 
-                ? 'border-success/20 bg-success/5' 
-                : 'border-destructive/20 bg-destructive/5'
+                ? 'border-2 border-success/30 bg-gradient-to-br from-success/5 to-success/10' 
+                : 'border border-destructive/20 bg-destructive/5'
             }`}>
-              {isAvailable ? (
-                <CheckCircle className="h-4 w-4 text-success flex-shrink-0 mt-0.5" />
-              ) : (
-                <AlertCircle className="h-4 w-4 text-destructive flex-shrink-0 mt-0.5" />
-              )}
-              <div className="flex-1">
-                <p className={`text-sm ${isAvailable ? 'text-success' : 'text-destructive'}`}>
-                  {error}
-                </p>
-                {isAvailable && (
-                  <div className="flex items-center gap-2 mt-1.5">
-                    <Badge variant="outline" className="text-success border-success text-xs">
-                      {t('pricing.available')}
-                    </Badge>
-                    <span className="text-xs text-muted-foreground">
-                      {language === 'zh' ? '溢价: 未知' : 'Premium: Unknown'}
-                    </span>
+              <div className="flex items-start gap-3 p-4">
+                {isAvailable ? (
+                  <div className="flex items-center justify-center w-10 h-10 rounded-full bg-success/10 shrink-0">
+                    <CheckCircle className="h-5 w-5 text-success" />
+                  </div>
+                ) : (
+                  <div className="flex items-center justify-center w-8 h-8 rounded-full bg-destructive/10 shrink-0">
+                    <AlertCircle className="h-4 w-4 text-destructive" />
                   </div>
                 )}
+                <div className="flex-1 min-w-0">
+                  {isAvailable ? (
+                    <>
+                      <div className="flex items-center gap-2 mb-1">
+                        <h3 className="text-base font-semibold text-success">
+                          {language === 'zh' ? '🎉 域名可注册！' : '🎉 Domain Available!'}
+                        </h3>
+                      </div>
+                      <p className="text-sm text-muted-foreground mb-3">
+                        {domain.trim().toLowerCase()} {language === 'zh' ? '当前未被注册，您可以立即注册。' : 'is not registered. You can register it now.'}
+                      </p>
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <Badge variant="outline" className="text-success border-success/40 bg-success/5 text-xs font-medium">
+                          {t('pricing.available')}
+                        </Badge>
+                        <span className="text-xs text-muted-foreground">
+                          {language === 'zh' ? '溢价状态: 未知' : 'Premium: Unknown'}
+                        </span>
+                      </div>
+                    </>
+                  ) : (
+                    <p className="text-sm text-destructive">{error}</p>
+                  )}
+                </div>
               </div>
             </div>
           )}
