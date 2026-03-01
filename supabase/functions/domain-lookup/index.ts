@@ -26,6 +26,12 @@ const SLOW_WHOIS_SERVERS = new Set([
   'whois.nic.cu',      // .cu - 古巴，不稳定
   'whois.nic.sy',      // .sy - 叙利亚，不稳定
   'whois.nic.td',
+  'whois.nic.ng',      // .ng - 尼日利亚，超慢
+  'whois.nic.cd',      // .cd - 刚果，不稳定
+  'whois.nic.et',      // .et - 埃塞俄比亚，不可达
+  'whois.nic.tz',      // .tz - 坦桑尼亚，不稳定
+  'whois.nic.cm',      // .cm - 喀麦隆，不稳定
+  'whois.nic.dz',      // .dz - 阿尔及利亚，不稳定
 ]);
 
 // 快速 WHOIS 服务器 (响应通常 <2s)
@@ -980,13 +986,17 @@ function getAgeLabel(registrationDate: string): string | null {
     const now = new Date();
     const years = Math.floor((now.getTime() - regDate.getTime()) / (365.25 * 24 * 60 * 60 * 1000));
     
+    const diffMs = now.getTime() - regDate.getTime();
+    const days = Math.floor(diffMs / (24 * 60 * 60 * 1000));
+    
     if (years >= 30) return '创世古董';
     if (years >= 20) return '古董域名';
     if (years >= 15) return '老域名';
     if (years >= 10) return '成熟域名';
     if (years >= 5) return '中龄域名';
     if (years >= 1) return '新域名';
-    return '新注册';
+    if (days <= 30) return '新注册';
+    return `${days}天前注册`;
   } catch {
     return null;
   }
@@ -1267,16 +1277,19 @@ async function queryWhoisHttp(domain: string, tld: string): Promise<string | nul
   // 常见的 HTTP WHOIS 端点
   const httpEndpoints = [
     `https://www.whois.com/whois/${domain}`,
-    `https://whois.domaintools.com/${domain}`,
   ];
   
-  // 特定 TLD 的 HTTP 端点
+  // 特定 TLD 的 HTTP 端点 - 扩展支持更多 ccTLD
   const tldHttpEndpoints: Record<string, string> = {
     'cn': `http://whois.cnnic.cn/WhoisServlet?queryType=Domain&domain=${domain}`,
     'hk': `https://www.hkirc.hk/whois?name=${domain}`,
     'tw': `https://whois.twnic.net.tw/whois_query.cgi?domain=${domain}`,
     'jp': `https://whois.jprs.jp/${domain}`,
     'kr': `https://whois.kr/kor/whois.jsc?keyword=${domain}`,
+    'bn': `https://www.bnnic.bn/check-domain?domain=${domain}`,
+    'td': `https://www.nic.td/whois.php?domain=${domain}`,
+    'ng': `https://www.nira.org.ng/whois?domain=${domain}`,
+    'cd': `https://www.nic.cd/whois/?domain=${domain}`,
   };
   
   if (tldHttpEndpoints[tld]) {
@@ -1301,7 +1314,12 @@ async function queryWhoisHttp(domain: string, tld: string): Promise<string | nul
       
       if (response.ok) {
         const text = await response.text();
-        if (text.length > 100 && (text.includes('Domain') || text.includes('domain') || text.includes('Registrar') || text.includes('创建日期'))) {
+        if (text.length > 100 && (
+          text.includes('Domain') || text.includes('domain') || 
+          text.includes('Registrar') || text.includes('创建日期') ||
+          text.includes('Name Server') || text.includes('nserver') ||
+          text.includes('registrar') || text.includes('Expir')
+        )) {
           console.log(`HTTP WHOIS response received: ${text.length} bytes`);
           return text;
         }
@@ -1557,6 +1575,9 @@ function parseWhoisText(text: string, domain: string): any {
     return value.trim()
       .replace(/^\s*:\s*/, '') // 移除开头的冒号
       .replace(/\s+/g, ' ') // 规范化空格
+      .replace(/[\x00-\x1F\x7F]/g, '') // 移除控制字符
+      .replace(/^\s*[-=]+\s*$/, '') // 移除纯分隔线
+      .replace(/\.$/, '') // 移除末尾的点（NS记录等）
       .trim();
   };
   
@@ -1623,10 +1644,17 @@ function parseWhoisText(text: string, domain: string): any {
     // 解析域名服务器
     const nsValue = matchField(trimmedLine, fieldMappings.nameServer);
     if (nsValue) {
-      // 清理NS值，移除前缀和多余字符
-      const cleanNs = nsValue.replace(/^:\s*/, '').toLowerCase().trim();
-      if (cleanNs && !result.nameServers.includes(cleanNs) && cleanNs.includes('.')) {
-        result.nameServers.push(cleanNs);
+    // 清理NS值，移除前缀和多余字符，支持多值（空格/逗号分隔）
+      const rawNs = nsValue.replace(/^:\s*/, '').trim();
+      // 有些服务器在一行返回多个NS，用空格或逗号分隔
+      const nsParts = rawNs.split(/[\s,;]+/).filter(Boolean);
+      for (const part of nsParts) {
+        const cleanNs = part.toLowerCase().trim()
+          .replace(/\.$/, '')  // 移除末尾的点
+          .replace(/[^\w.-]/g, ''); // 移除非法字符
+        if (cleanNs && cleanNs.includes('.') && cleanNs.length > 3 && cleanNs.length < 100 && !result.nameServers.includes(cleanNs)) {
+          result.nameServers.push(cleanNs);
+        }
       }
     }
     
@@ -1857,13 +1885,25 @@ function parseWhoisText(text: string, domain: string): any {
       }
     }
     
-    // 尝试直接匹配看起来像NS的域名 (如 dns1.xxx.com, ns1.xxx.com)
-    const directNsPattern = /\b((?:dns|ns|name)\d*\.[a-z0-9][a-z0-9.-]+\.[a-z]{2,})\b/gi;
+    // 尝试直接匹配看起来像NS的域名 (如 dns1.xxx.com, ns1.xxx.com, a.dns.bn)
+    const directNsPattern = /\b((?:dns|ns|name|a|b|c|d)\d*\.[a-z0-9][a-z0-9.-]+\.[a-z]{2,})\b/gi;
     let directMatch;
     while ((directMatch = directNsPattern.exec(text)) !== null) {
-      const ns = directMatch[1].toLowerCase();
-      if (!result.nameServers.includes(ns)) {
+      const ns = directMatch[1].toLowerCase().replace(/\.$/, '');
+      if (ns.includes('.') && ns.length > 3 && !result.nameServers.includes(ns)) {
         result.nameServers.push(ns);
+      }
+    }
+    
+    // 额外：匹配 "Host Name:" 后跟换行和多个值的格式
+    const hostNameBlock = text.match(/Host\s*Name[:\s]*\n([\s\S]*?)(?:\n\s*\n|\n[A-Z])/i);
+    if (hostNameBlock) {
+      const lines = hostNameBlock[1].split('\n');
+      for (const line of lines) {
+        const ns = line.trim().toLowerCase().replace(/\.$/, '');
+        if (ns && ns.includes('.') && ns.length > 3 && !result.nameServers.includes(ns)) {
+          result.nameServers.push(ns);
+        }
       }
     }
   }
@@ -2012,7 +2052,7 @@ async function queryWhois(domain: string): Promise<any> {
     // 对于 ccTLD，使用多格式查询
     const tcpResponse = isCctld 
       ? await queryWhoisWithFormats(domain, whoisServer, tld)
-      : await queryWhoisTcp(domain, whoisServer, 15000);
+      : await queryWhoisTcp(domain, whoisServer, 8000);
     
     if (tcpResponse) {
       const parsed = parseWhoisText(tcpResponse, domain);
@@ -2075,7 +2115,7 @@ async function queryWhois(domain: string): Promise<any> {
     const tldServers = gTldServers[tld] || ['whois.verisign-grs.com', 'whois.internic.net'];
     
     for (const server of tldServers) {
-      const tcpResponse = await queryWhoisTcp(domain, server, 15000);
+      const tcpResponse = await queryWhoisTcp(domain, server, 8000);
       if (tcpResponse) {
         // 检查是否有重定向信息
         const referMatch = tcpResponse.match(/Registrar WHOIS Server:\s*(\S+)/i) ||
@@ -2085,7 +2125,7 @@ async function queryWhois(domain: string): Promise<any> {
         if (referMatch && referMatch[1]) {
           const referServer = referMatch[1].trim();
           console.log(`Found referral WHOIS server: ${referServer}`);
-          const referResponse = await queryWhoisTcp(domain, referServer, 15000);
+          const referResponse = await queryWhoisTcp(domain, referServer, 6000);
           if (referResponse) {
             const parsed = parseWhoisText(referResponse, domain);
             if (parsed.registrar || parsed.registrationDate) {
@@ -2415,7 +2455,7 @@ async function smartDomainQuery(domain: string, tld: string): Promise<{ data: an
     const whoisPromise = queryWhois(domain).then(data => data ? { type: 'whois', data } : null).catch(() => null);
     
     // 使用 Promise.race 但带超时
-    const timeout = new Promise<null>((resolve) => setTimeout(() => resolve(null), 10000));
+    const timeout = new Promise<null>((resolve) => setTimeout(() => resolve(null), 8000));
     
     try {
       // 等待第一个成功的结果
