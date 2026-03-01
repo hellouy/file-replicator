@@ -25,7 +25,6 @@ const SLOW_WHOIS_SERVERS = new Set([
   'whois.nic.kp',      // .kp - 朝鲜，不可达
   'whois.nic.cu',      // .cu - 古巴，不稳定
   'whois.nic.sy',      // .sy - 叙利亚，不稳定
-  'whois.nic.td',
   'whois.nic.ng',      // .ng - 尼日利亚，超慢
   'whois.nic.cd',      // .cd - 刚果，不稳定
   'whois.nic.et',      // .et - 埃塞俄比亚，不可达
@@ -45,6 +44,9 @@ const FAST_WHOIS_SERVERS = new Set([
   'whois.nic.google',
   'whois.cloudflare.com',
 ]);
+
+// 易超时 ccTLD：给更长超时但不影响其他域名速度
+const LONG_TIMEOUT_CCTLDS = new Set(['ng', 'td', 'cd', 'bn']);
 
 // ==================== 完整的域名状态码映射 (支持多语言) ====================
 const STATUS_CODE_MAP: Record<string, string> = {
@@ -1138,9 +1140,11 @@ const CCTLD_QUERY_FORMATS: Record<string, string[]> = {
   'nz': ['%s'],
   'za': ['%s'],
   'eg': ['%s'],
-  'ng': ['%s'],
+  'ng': ['%s', 'domain %s'],
+  'td': ['%s', 'domain %s'],
+  'cd': ['%s', 'domain %s'],
+  'bn': ['%s', 'domain %s'],
   'ke': ['%s'],
-  'gh': ['%s'],
   'tz': ['%s'],
   'ma': ['%s'],
   'dz': ['%s'],
@@ -1252,18 +1256,20 @@ async function queryWhoisTcp(domain: string, server: string, timeout = 8000, que
 // 尝试多种查询格式 - 速度优化版
 async function queryWhoisWithFormats(domain: string, server: string, tld: string): Promise<string | null> {
   const formats = CCTLD_QUERY_FORMATS[tld] || ['%s'];
+  const firstTimeout = LONG_TIMEOUT_CCTLDS.has(tld) ? 12000 : 8000;
+  const secondTimeout = LONG_TIMEOUT_CCTLDS.has(tld) ? 9000 : 5000;
   
-  // 只尝试第一种格式，减少等待时间
+  // 先尝试第一种格式
   const format = formats[0];
-  const response = await queryWhoisTcp(domain, server, 8000, format);
+  const response = await queryWhoisTcp(domain, server, firstTimeout, format);
   
   if (response && response.length > 50) {
     return response;
   }
   
-  // 如果第一种格式失败且有其他格式，快速尝试
+  // 第一种失败后尝试第二种
   if (formats.length > 1 && !response) {
-    const response2 = await queryWhoisTcp(domain, server, 5000, formats[1]);
+    const response2 = await queryWhoisTcp(domain, server, secondTimeout, formats[1]);
     if (response2 && response2.length > 50) {
       return response2;
     }
@@ -1569,6 +1575,7 @@ function parseWhoisText(text: string, domain: string): any {
   
   // 当前正在解析的联系人类型
   let currentContactType: string | null = null;
+  let inNameServerBlock = false;
   
   // 辅助函数: 清理提取的值
   const cleanValue = (value: string): string => {
@@ -1606,7 +1613,33 @@ function parseWhoisText(text: string, domain: string): any {
   
   for (const line of lines) {
     const trimmedLine = line.trim();
-    if (!trimmedLine || trimmedLine.startsWith('%') || trimmedLine.startsWith('#') || trimmedLine.startsWith('>>>') || trimmedLine.startsWith('===')) continue;
+    if (!trimmedLine || trimmedLine.startsWith('%') || trimmedLine.startsWith('#') || trimmedLine.startsWith('>>>') || trimmedLine.startsWith('===')) {
+      if (!trimmedLine && inNameServerBlock) inNameServerBlock = false;
+      continue;
+    }
+
+    // 处理 Name Servers: 后续多行（如 .bn 第二条NS单独占行）
+    if (inNameServerBlock) {
+      const isNewSection = /^[A-Za-z\u4e00-\u9fa5][\w\s\-\/]{1,30}:\s*/.test(trimmedLine) && !/^NS\d*\s*:/i.test(trimmedLine);
+      if (isNewSection) {
+        inNameServerBlock = false;
+      } else {
+        const continuationNs = trimmedLine
+          .split(/[\s,;]+/)
+          .map((s) => s.toLowerCase().trim().replace(/\.$/, '').replace(/[^\w.-]/g, ''))
+          .filter((s) => s.includes('.') && s.length > 3 && s.length < 100);
+
+        for (const ns of continuationNs) {
+          if (!result.nameServers.includes(ns)) {
+            result.nameServers.push(ns);
+          }
+        }
+
+        if (continuationNs.length > 0) {
+          continue;
+        }
+      }
+    }
     
     // 检测联系人区块
     if (trimmedLine.includes('[HOLDER]') || trimmedLine.includes('[REGISTRANT]')) {
@@ -1643,19 +1676,20 @@ function parseWhoisText(text: string, domain: string): any {
     
     // 解析域名服务器
     const nsValue = matchField(trimmedLine, fieldMappings.nameServer);
-    if (nsValue) {
-    // 清理NS值，移除前缀和多余字符，支持多值（空格/逗号分隔）
+    if (nsValue !== null) {
       const rawNs = nsValue.replace(/^:\s*/, '').trim();
-      // 有些服务器在一行返回多个NS，用空格或逗号分隔
-      const nsParts = rawNs.split(/[\s,;]+/).filter(Boolean);
-      for (const part of nsParts) {
-        const cleanNs = part.toLowerCase().trim()
-          .replace(/\.$/, '')  // 移除末尾的点
-          .replace(/[^\w.-]/g, ''); // 移除非法字符
-        if (cleanNs && cleanNs.includes('.') && cleanNs.length > 3 && cleanNs.length < 100 && !result.nameServers.includes(cleanNs)) {
+      const nsParts = rawNs
+        .split(/[\s,;]+/)
+        .map((part) => part.toLowerCase().trim().replace(/\.$/, '').replace(/[^\w.-]/g, ''))
+        .filter((part) => part.includes('.') && part.length > 3 && part.length < 100);
+
+      for (const cleanNs of nsParts) {
+        if (!result.nameServers.includes(cleanNs)) {
           result.nameServers.push(cleanNs);
         }
       }
+
+      inNameServerBlock = true;
     }
     
     // 解析状态
@@ -1678,8 +1712,11 @@ function parseWhoisText(text: string, domain: string): any {
           value = matchField(trimmedLine, fieldMappings.registrantNameFrench || []);
         }
         if (value && !value.toLowerCase().includes('domaine')) {
-          if (!result.registrant) result.registrant = {};
-          result.registrant.name = value;
+          const cleanRegistrantName = value.replace(/^(?:name|registrant)\s*:\s*/i, '').trim();
+          if (cleanRegistrantName) {
+            if (!result.registrant) result.registrant = {};
+            result.registrant.name = cleanRegistrantName;
+          }
         }
       }
       
@@ -1959,7 +1996,11 @@ function parseWhoisText(text: string, domain: string): any {
     for (const pattern of registrantPatterns) {
       const match = text.match(pattern);
       if (match && match[1]) {
-        const name = match[1].trim();
+        const name = match[1]
+          .trim()
+          .replace(/^(?:name|registrant)\s*:\s*/i, '')
+          .replace(/^\s*[-:]+\s*/, '')
+          .trim();
         // 排除常见的非姓名值
         if (name && name.length < 100 && 
             !name.toLowerCase().includes('redacted') &&
@@ -2144,13 +2185,14 @@ async function queryWhois(domain: string): Promise<any> {
     }
   }
   
-  // 5. 对于 ccTLD，尝试构造标准 WHOIS 服务器地址
-  if (isCctld && !whoisServer) {
+  // 5. 对于 ccTLD，额外尝试构造标准 WHOIS 服务器地址（即使已有DB服务器）
+  if (isCctld) {
     const guessedServers = [
       `whois.nic.${tld}`,
       `whois.${tld}`,
       `whois.registry.${tld}`,
-    ];
+      `whois.nic.net.${tld}`,
+    ].filter((server, index, arr) => arr.indexOf(server) === index && server !== whoisServer);
     
     for (const server of guessedServers) {
       console.log(`Trying guessed ccTLD WHOIS server: ${server}`);
@@ -2160,6 +2202,14 @@ async function queryWhois(domain: string): Promise<any> {
         if (parsed.registrar || parsed.registrationDate || parsed.nameServers.length > 0) {
           console.log(`Guessed WHOIS server ${server} successful`);
           return parsed;
+        }
+
+        const lowerResponse = tcpResponse.toLowerCase();
+        if (lowerResponse.includes('not found') ||
+            lowerResponse.includes('no match') ||
+            lowerResponse.includes('no entries') ||
+            lowerResponse.includes('domain not registered')) {
+          return { ...parsed, domainNotFound: true };
         }
       }
     }
@@ -2283,49 +2333,70 @@ function findRegistrar(entities: RdapEntity[]): { name: string; ianaId?: string 
 async function queryRdap(domain: string): Promise<any> {
   const tld = getTld(domain);
   const bootstrap = await getRdapBootstrap();
-  
-  let rdapServer = bootstrap[tld];
-  
-  if (!rdapServer) {
-    const commonServers = [
-      'https://rdap.verisign.com/com/v1/',
-      'https://rdap.org/',
-    ];
-    
-    for (const server of commonServers) {
-      try {
-        const url = `${server}domain/${domain}`;
+  const rdapServer = bootstrap[tld];
+
+  const fallbackServers = [
+    'https://rdap.org/',
+    'https://rdap.verisign.com/com/v1/',
+  ];
+
+  const serversToTry = [rdapServer, ...fallbackServers]
+    .filter((s): s is string => Boolean(s))
+    .filter((server, index, arr) => arr.indexOf(server) === index);
+
+  let hasAuthoritative404 = false;
+  let lastErrorMessage = '';
+
+  for (const server of serversToTry) {
+    try {
+      const rawBaseUrl = server.endsWith('/') ? server : `${server}/`;
+      const baseUrl = rawBaseUrl.replace(/^http:\/\//i, 'https://');
+      const url = `${baseUrl}domain/${domain}`;
+
+      if (server === rdapServer) {
+        console.log(`Querying RDAP: ${url}`);
+      } else {
         console.log(`Trying fallback RDAP server: ${url}`);
-        const response = await fetch(url, {
-          headers: { 'Accept': 'application/rdap+json' }
-        });
-        if (response.ok) {
-          return await response.json();
+      }
+
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 7000);
+
+      const response = await fetch(url, {
+        signal: controller.signal,
+        headers: { 'Accept': 'application/rdap+json' }
+      });
+
+      clearTimeout(timeoutId);
+
+      if (response.status === 404) {
+        if (server === rdapServer) {
+          hasAuthoritative404 = true;
         }
-      } catch (e) {
         continue;
       }
+
+      if (!response.ok) {
+        lastErrorMessage = `RDAP query failed: ${response.status}`;
+        continue;
+      }
+
+      return await response.json();
+    } catch (e: any) {
+      lastErrorMessage = e?.message || String(e);
+      continue;
     }
-    
-    throw new Error(`unsupported_tld: No RDAP server found for .${tld}`);
   }
-  
-  const url = `${rdapServer}domain/${domain}`;
-  console.log(`Querying RDAP: ${url}`);
-  
-  const response = await fetch(url, {
-    headers: { 'Accept': 'application/rdap+json' }
-  });
-  
-  if (response.status === 404) {
+
+  if (hasAuthoritative404) {
     throw new Error('domain_not_found');
   }
-  
-  if (!response.ok) {
-    throw new Error(`RDAP query failed: ${response.status}`);
+
+  if (!rdapServer) {
+    throw new Error(`unsupported_tld: No RDAP server found for .${tld}`);
   }
-  
-  return await response.json();
+
+  throw new Error(lastErrorMessage || 'rdap_all_failed');
 }
 
 function parseRdapResponse(data: RdapResponse, rawRdap: any): any {
@@ -2443,28 +2514,23 @@ async function queryPricing(domain: string): Promise<any> {
 }
 
 // 智能查询策略：RDAP 和 WHOIS 竞速查询
-async function smartDomainQuery(domain: string, tld: string): Promise<{ data: any; source: string } | null> {
+async function smartDomainQuery(domain: string, tld: string): Promise<{ data: any; source: string; availability: 'registered' | 'available' | 'unknown' }> {
   const isCctld = isCcTld(tld);
   
-  // 对于 ccTLD，RDAP 支持不稳定，同时启动两个查询
+  // 对于 ccTLD，同时查询 RDAP 和 WHOIS
   if (isCctld) {
     console.log(`ccTLD detected (.${tld}), using parallel query strategy`);
     
-    // 同时启动 RDAP 和 WHOIS 查询
     const rdapPromise = queryRdap(domain).then(data => ({ type: 'rdap', data })).catch(() => null);
     const whoisPromise = queryWhois(domain).then(data => data ? { type: 'whois', data } : null).catch(() => null);
-    
-    // 使用 Promise.race 但带超时
     const timeout = new Promise<null>((resolve) => setTimeout(() => resolve(null), 8000));
     
     try {
-      // 等待第一个成功的结果
       const results = await Promise.all([
         Promise.race([rdapPromise, timeout]),
         Promise.race([whoisPromise, timeout])
       ]);
       
-      // 优先使用 RDAP 结果（更结构化）
       const rdapResult = results[0];
       const whoisResult = results[1];
       
@@ -2472,26 +2538,25 @@ async function smartDomainQuery(domain: string, tld: string): Promise<{ data: an
         const parsed = parseRdapResponse(rdapResult.data, rdapResult.data);
         if (parsed.registrar || parsed.registrationDate || parsed.nameServers?.length > 0) {
           console.log('Using RDAP result (parallel query)');
-          return { data: parsed, source: 'rdap' };
+          return { data: parsed, source: 'rdap', availability: 'registered' };
         }
       }
       
       if (whoisResult && whoisResult.data) {
         if (whoisResult.data.registrar || whoisResult.data.registrationDate || whoisResult.data.nameServers?.length > 0) {
           console.log('Using WHOIS result (parallel query)');
-          return { data: whoisResult.data, source: 'whois' };
+          return { data: whoisResult.data, source: 'whois', availability: 'registered' };
         }
       }
       
-      // 检查是否域名不存在
-      if (rdapResult?.data === null && whoisResult?.data?.domainNotFound) {
-        return null; // 域名未注册
+      if (rdapResult?.data === null || whoisResult?.data?.domainNotFound) {
+        return { data: null, source: 'not_found', availability: 'available' };
       }
     } catch (e) {
       console.log('Parallel query failed:', e);
     }
     
-    return null;
+    return { data: null, source: 'unresolved', availability: 'unknown' };
   }
   
   // 对于 gTLD，RDAP 优先
@@ -2500,24 +2565,27 @@ async function smartDomainQuery(domain: string, tld: string): Promise<{ data: an
     const rdapData = await queryRdap(domain);
     const parsed = parseRdapResponse(rdapData, rdapData);
     console.log('RDAP query successful');
-    return { data: parsed, source: 'rdap' };
+    return { data: parsed, source: 'rdap', availability: 'registered' };
   } catch (rdapError: any) {
     console.log(`RDAP failed: ${rdapError.message}`);
     
     if (rdapError.message === 'domain_not_found') {
-      return null; // 域名未注册
+      return { data: null, source: 'not_found', availability: 'available' };
     }
     
-    // RDAP 失败，尝试 WHOIS
     console.log(`Falling back to WHOIS for .${tld}`);
     const whoisData = await queryWhois(domain);
     
     if (whoisData && (whoisData.registrar || whoisData.registrationDate || whoisData.nameServers?.length > 0)) {
       console.log('WHOIS fallback successful');
-      return { data: whoisData, source: 'whois' };
+      return { data: whoisData, source: 'whois', availability: 'registered' };
+    }
+
+    if (whoisData?.domainNotFound) {
+      return { data: null, source: 'not_found', availability: 'available' };
     }
     
-    return null;
+    return { data: null, source: 'unresolved', availability: 'unknown' };
   }
 }
 
@@ -2559,13 +2627,24 @@ serve(async (req) => {
     const elapsed = Date.now() - startTime;
     console.log(`Query completed in ${elapsed}ms`);
     
-    if (!queryResult) {
-      // 域名不存在或查询失败
+    if (queryResult.availability === 'available') {
       return new Response(
         JSON.stringify({ 
-          error: `域名 ${normalizedDomain} 未注册或无法查询`,
+          error: `域名 ${normalizedDomain} 未注册`,
           errorType: 'domain_not_found',
           isAvailable: true,
+          pricing: pricingResult,
+        }),
+        { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
+
+    if (queryResult.availability === 'unknown' || !queryResult.data) {
+      return new Response(
+        JSON.stringify({
+          error: `域名 ${normalizedDomain} 暂时无法查询，请稍后重试`,
+          errorType: 'query_failed',
+          isAvailable: false,
           pricing: pricingResult,
         }),
         { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
