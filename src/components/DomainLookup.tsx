@@ -366,7 +366,12 @@ const DomainLookup = ({ initialDomain, onFavoriteAdded, onDomainQueried }: Domai
                       </div>
                     </>
                   ) : (
-                    <p className="text-sm text-destructive">{error}</p>
+                    <div>
+                      <p className="text-sm text-destructive font-medium">{error}</p>
+                      <p className="text-xs text-muted-foreground mt-1">
+                        {language === 'zh' ? '系统将自动重试，稍后再查可获得结果' : 'System will auto-retry, check again later'}
+                      </p>
+                    </div>
                   )}
                 </div>
               </div>

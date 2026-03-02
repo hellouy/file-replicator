@@ -25,12 +25,11 @@ const SLOW_WHOIS_SERVERS = new Set([
   'whois.nic.kp',      // .kp - 朝鲜，不可达
   'whois.nic.cu',      // .cu - 古巴，不稳定
   'whois.nic.sy',      // .sy - 叙利亚，不稳定
-  'whois.nic.ng',      // .ng - 尼日利亚，超慢
-  'whois.nic.cd',      // .cd - 刚果，不稳定
   'whois.nic.et',      // .et - 埃塞俄比亚，不可达
   'whois.nic.tz',      // .tz - 坦桑尼亚，不稳定
   'whois.nic.cm',      // .cm - 喀麦隆，不稳定
   'whois.nic.dz',      // .dz - 阿尔及利亚，不稳定
+  'whois.nic.td',      // .td - 乍得，ECONNREFUSED
 ]);
 
 // 快速 WHOIS 服务器 (响应通常 <2s)
@@ -927,20 +926,19 @@ function detectPrivacyProtection(registrant: any, whoisText?: string): boolean {
          checkValue(registrant.email);
 }
 
-// 格式化日期为中文格式 - 增强版
-function formatDateChinese(dateStr: string): string {
-  if (!dateStr || dateStr === 'N/A' || dateStr.trim() === '') return '';
+// 解析日期字符串为 Date 对象 - 统一入口，确保 DD.MM.YYYY 格式正确
+function parseDateString(dateStr: string): Date | null {
+  if (!dateStr || dateStr === 'N/A' || dateStr.trim() === '') return null;
   
   try {
-    let date: Date;
     const cleanStr = dateStr.trim();
+    let date: Date;
     
-    // 尝试解析各种日期格式
     // 1. ISO 8601: 2025-05-19T07:29:45.086917Z
     if (cleanStr.includes('T')) {
       date = new Date(cleanStr);
     }
-    // 2. 中国格式: 2023-05-12 17:05:28 (空格分隔)
+    // 2. 中国格式: 2023-05-12 17:05:28
     else if (/^\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}$/.test(cleanStr)) {
       date = new Date(cleanStr.replace(' ', 'T') + 'Z');
     }
@@ -948,13 +946,18 @@ function formatDateChinese(dateStr: string): string {
     else if (/^\d{4}-\d{2}-\d{2}$/.test(cleanStr)) {
       date = new Date(cleanStr + 'T00:00:00Z');
     }
-    // 4. 欧洲格式: 12/05/2023 or 12.05.2023
-    else if (/^\d{2}[\/\.]\d{2}[\/\.]\d{4}$/.test(cleanStr)) {
-      const parts = cleanStr.split(/[\/\.]/);
-      date = new Date(`${parts[2]}-${parts[1]}-${parts[0]}`);
+    // 4. 欧洲格式 DD.MM.YYYY 或 DD/MM/YYYY (可带时间): 02.03.2026 12:39:10
+    else if (/^\d{2}[\/\.]\d{2}[\/\.]\d{4}/.test(cleanStr)) {
+      const match = cleanStr.match(/^(\d{2})[\/\.](\d{2})[\/\.](\d{4})(?:\s+(\d{2}:\d{2}:\d{2}))?/);
+      if (match) {
+        const [, dd, mm, yyyy, time] = match;
+        date = new Date(`${yyyy}-${mm}-${dd}T${time || '00:00:00'}Z`);
+      } else {
+        date = new Date(cleanStr);
+      }
     }
-    // 5. 英文日期: 12 May 2023
-    else if (/^\d{1,2}\s+\w+\s+\d{4}$/.test(cleanStr)) {
+    // 5. 英文日期: 20-Mar-2024 13:16:16 or 12 May 2023
+    else if (/^\d{1,2}[\s-]\w+[\s-]\d{4}/.test(cleanStr)) {
       date = new Date(cleanStr);
     }
     // 6. 其他格式尝试直接解析
@@ -962,34 +965,43 @@ function formatDateChinese(dateStr: string): string {
       date = new Date(cleanStr);
     }
     
-    if (isNaN(date.getTime())) return dateStr;
+    if (isNaN(date.getTime())) return null;
     
     const year = date.getFullYear();
-    const month = String(date.getMonth() + 1).padStart(2, '0');
-    const day = String(date.getDate()).padStart(2, '0');
+    if (year < 1990 || year > 2100) return null;
     
-    // 检查年份合理性 (1990-2100)
-    if (year < 1990 || year > 2100) return dateStr;
-    
-    return `${year}年${month}月${day}日`;
+    return date;
   } catch {
-    return dateStr;
+    return null;
   }
+}
+
+// 格式化日期为中文格式 - 增强版
+function formatDateChinese(dateStr: string): string {
+  if (!dateStr || dateStr === 'N/A' || dateStr.trim() === '') return '';
+  
+  const date = parseDateString(dateStr);
+  if (!date) return dateStr;
+  
+  const year = date.getUTCFullYear();
+  const month = String(date.getUTCMonth() + 1).padStart(2, '0');
+  const day = String(date.getUTCDate()).padStart(2, '0');
+  
+  return `${year}年${month}月${day}日`;
 }
 
 // 计算域名年龄标签
 function getAgeLabel(registrationDate: string): string | null {
   if (!registrationDate) return null;
   
+  const regDate = parseDateString(registrationDate);
+  if (!regDate) return null;
+  
   try {
-    const regDate = new Date(registrationDate);
-    if (isNaN(regDate.getTime())) return null;
-    
     const now = new Date();
-    const years = Math.floor((now.getTime() - regDate.getTime()) / (365.25 * 24 * 60 * 60 * 1000));
-    
     const diffMs = now.getTime() - regDate.getTime();
     const days = Math.floor(diffMs / (24 * 60 * 60 * 1000));
+    const years = Math.floor(days / 365.25);
     
     if (years >= 30) return '创世古董';
     if (years >= 20) return '古董域名';
@@ -1035,14 +1047,13 @@ function getUpdateLabel(status: string[]): string | null {
 function getRemainingDays(expirationDate: string): number | null {
   if (!expirationDate) return null;
   
+  const expDate = parseDateString(expirationDate);
+  if (!expDate) return null;
+  
   try {
-    const expDate = new Date(expirationDate);
-    if (isNaN(expDate.getTime())) return null;
-    
     const now = new Date();
     const diffTime = expDate.getTime() - now.getTime();
     const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
-    
     return diffDays;
   } catch {
     return null;
@@ -1382,6 +1393,8 @@ function parseWhoisText(text: string, domain: string): any {
       'created:', 'Domain Create Date:', 'Created On:', 'Creation date:',
       'Registered:', 'Registered on:', 'Domain registered:', 'Registration Time:',
       'domain_datecreate:', 'Created Date:', 'Registered Date:',
+      // .mw 格式
+      'registered:',
       // 中文
       '注册日期:', '创建日期:', '注册时间:', '域名注册时间:',
       // 法语
@@ -1411,6 +1424,8 @@ function parseWhoisText(text: string, domain: string): any {
       'paid-till:', 'Valid Until:', 'Validity:', 'Expiration Time:',
       'Domain Expiration Date:', 'Renewal Date:', 'Renewal date:',
       'Expire Date:', 'Expires date:', 'Expiration:', 'free-date:',
+      // .mw / .bn 格式
+      'expire:', 'Expiration Date:',
       // 中文
       '过期日期:', '到期日期:', '过期时间:', '域名到期时间:', '有效期至:',
       // 法语
@@ -1438,6 +1453,8 @@ function parseWhoisText(text: string, domain: string): any {
       'Updated Date:', 'Last Updated:', 'Last Modified:', 'Modified:',
       'Updated:', 'Last Update:', 'Domain Last Updated Date:', 'Changed:',
       'Last updated:', 'Last update of RDAP database:',
+      // .bn 格式
+      'Modified Date:',
       // 中文
       '更新日期:', '最后更新:', '最近更新:',
       // 法语
@@ -1695,10 +1712,10 @@ function parseWhoisText(text: string, domain: string): any {
     // 解析状态
     const statusValue = matchField(trimmedLine, fieldMappings.status);
     if (statusValue) {
-      // 提取状态码（去掉URL部分）
-      const statusCode = statusValue.split(' ')[0].split('http')[0].trim();
-      if (statusCode && !result.status.includes(statusCode)) {
-        result.status.push(statusCode);
+      // 完整状态值（去掉URL但保留描述性文本）
+      const fullStatus = statusValue.split('http')[0].trim();
+      if (fullStatus && !result.status.includes(fullStatus)) {
+        result.status.push(fullStatus);
       }
     }
     
@@ -2513,17 +2530,127 @@ async function queryPricing(domain: string): Promise<any> {
   }
 }
 
-// 智能查询策略：RDAP 和 WHOIS 竞速查询
-async function smartDomainQuery(domain: string, tld: string): Promise<{ data: any; source: string; availability: 'registered' | 'available' | 'unknown' }> {
+// 查询失败原因分类
+type FailureReason = 'timeout' | 'unreachable' | 'no_public_data' | 'unknown';
+
+function classifyFailure(errors: string[]): FailureReason {
+  const combined = errors.join(' ').toLowerCase();
+  if (combined.includes('timeout') || combined.includes('timed out') || combined.includes('deadline')) return 'timeout';
+  if (combined.includes('refused') || combined.includes('econnrefused') || combined.includes('dns error') || combined.includes('not known') || combined.includes('unreachable')) return 'unreachable';
+  if (combined.includes('not found') || combined.includes('no match') || combined.includes('unsupported_tld') || combined.includes('no rdap')) return 'no_public_data';
+  return 'unknown';
+}
+
+function failureReasonText(reason: FailureReason): string {
+  switch (reason) {
+    case 'timeout': return '注册局响应超时';
+    case 'unreachable': return '注册局网络不可达';
+    case 'no_public_data': return '暂无公开查询数据';
+    default: return '查询暂时不可用';
+  }
+}
+
+// 后台缓存 & 重试
+async function getCachedResult(domain: string): Promise<any | null> {
+  try {
+    const { data } = await supabase
+      .from('domain_lookup_cache')
+      .select('*')
+      .eq('domain_name', domain)
+      .gt('expires_at', new Date().toISOString())
+      .maybeSingle();
+    if (data) {
+      // bump hit_count
+      await supabase.from('domain_lookup_cache').update({ hit_count: (data.hit_count || 0) + 1 }).eq('id', data.id);
+      return data;
+    }
+  } catch (e) { console.log('Cache read error:', e); }
+  return null;
+}
+
+async function saveCacheResult(domain: string, tld: string, payload: any, availability: string, source: string, failureReason?: string): Promise<void> {
+  try {
+    const record: any = {
+      domain_name: domain,
+      tld,
+      payload: payload || {},
+      availability,
+      lookup_source: source,
+      failure_reason: failureReason || null,
+      expires_at: new Date(Date.now() + (availability === 'registered' ? 30 * 60 * 1000 : 5 * 60 * 1000)).toISOString(),
+    };
+    if (availability === 'registered') {
+      record.last_success_at = new Date().toISOString();
+    } else {
+      record.last_failure_at = new Date().toISOString();
+    }
+    await supabase.from('domain_lookup_cache').upsert(record, { onConflict: 'domain_name' });
+  } catch (e) { console.log('Cache write error:', e); }
+}
+
+async function enqueueRetry(domain: string, tld: string, lastError: string): Promise<void> {
+  try {
+    await supabase.from('domain_lookup_retry_queue').upsert({
+      domain_name: domain,
+      tld,
+      status: 'pending',
+      last_error: lastError,
+      next_retry_at: new Date(Date.now() + 5000).toISOString(), // retry in 5s
+    }, { onConflict: 'domain_name' });
+  } catch (e) { console.log('Retry enqueue error:', e); }
+}
+
+async function processRetryQueue(): Promise<void> {
+  try {
+    const { data: items } = await supabase
+      .from('domain_lookup_retry_queue')
+      .select('*')
+      .eq('status', 'pending')
+      .lt('next_retry_at', new Date().toISOString())
+      .lt('attempt_count', 2)
+      .limit(3);
+    
+    if (!items || items.length === 0) return;
+    
+    for (const item of items) {
+      console.log(`Processing retry for ${item.domain_name} (attempt ${item.attempt_count + 1})`);
+      await supabase.from('domain_lookup_retry_queue').update({ status: 'processing', attempt_count: item.attempt_count + 1 }).eq('id', item.id);
+      
+      try {
+        const tld = getTld(item.domain_name);
+        const result = await smartDomainQueryInternal(item.domain_name, tld, []);
+        if (result.availability === 'registered' && result.data) {
+          await saveCacheResult(item.domain_name, tld, result.data, 'registered', result.source);
+          await supabase.from('domain_lookup_retry_queue').update({ status: 'completed' }).eq('id', item.id);
+          console.log(`Retry succeeded for ${item.domain_name}`);
+        } else {
+          await supabase.from('domain_lookup_retry_queue').update({
+            status: item.attempt_count + 1 >= 2 ? 'failed' : 'pending',
+            last_error: result.failureReason || 'still_unknown',
+            next_retry_at: new Date(Date.now() + 15000).toISOString(),
+          }).eq('id', item.id);
+        }
+      } catch (e: any) {
+        await supabase.from('domain_lookup_retry_queue').update({
+          status: item.attempt_count + 1 >= 2 ? 'failed' : 'pending',
+          last_error: e?.message || 'unknown',
+          next_retry_at: new Date(Date.now() + 15000).toISOString(),
+        }).eq('id', item.id);
+      }
+    }
+  } catch (e) { console.log('Retry queue processing error:', e); }
+}
+
+// 内部查询逻辑（不含缓存）
+async function smartDomainQueryInternal(domain: string, tld: string, errors: string[]): Promise<{ data: any; source: string; availability: 'registered' | 'available' | 'unknown'; failureReason?: string }> {
   const isCctld = isCcTld(tld);
   
-  // 对于 ccTLD，同时查询 RDAP 和 WHOIS
   if (isCctld) {
     console.log(`ccTLD detected (.${tld}), using parallel query strategy`);
     
-    const rdapPromise = queryRdap(domain).then(data => ({ type: 'rdap', data })).catch(() => null);
-    const whoisPromise = queryWhois(domain).then(data => data ? { type: 'whois', data } : null).catch(() => null);
-    const timeout = new Promise<null>((resolve) => setTimeout(() => resolve(null), 8000));
+    const rdapPromise = queryRdap(domain).then(data => ({ type: 'rdap', data })).catch((e) => { errors.push(e?.message || 'rdap_failed'); return null; });
+    const whoisPromise = queryWhois(domain).then(data => data ? { type: 'whois', data } : null).catch((e) => { errors.push(e?.message || 'whois_failed'); return null; });
+    const timeout = new Promise<null>((resolve) => setTimeout(() => { errors.push('timeout'); resolve(null); }, 8000));
     
     try {
       const results = await Promise.all([
@@ -2552,11 +2679,13 @@ async function smartDomainQuery(domain: string, tld: string): Promise<{ data: an
       if (rdapResult?.data === null || whoisResult?.data?.domainNotFound) {
         return { data: null, source: 'not_found', availability: 'available' };
       }
-    } catch (e) {
+    } catch (e: any) {
+      errors.push(e?.message || 'parallel_failed');
       console.log('Parallel query failed:', e);
     }
     
-    return { data: null, source: 'unresolved', availability: 'unknown' };
+    const reason = classifyFailure(errors);
+    return { data: null, source: 'unresolved', availability: 'unknown', failureReason: failureReasonText(reason) };
   }
   
   // 对于 gTLD，RDAP 优先
@@ -2567,6 +2696,7 @@ async function smartDomainQuery(domain: string, tld: string): Promise<{ data: an
     console.log('RDAP query successful');
     return { data: parsed, source: 'rdap', availability: 'registered' };
   } catch (rdapError: any) {
+    errors.push(rdapError?.message || 'rdap_failed');
     console.log(`RDAP failed: ${rdapError.message}`);
     
     if (rdapError.message === 'domain_not_found') {
@@ -2574,19 +2704,56 @@ async function smartDomainQuery(domain: string, tld: string): Promise<{ data: an
     }
     
     console.log(`Falling back to WHOIS for .${tld}`);
-    const whoisData = await queryWhois(domain);
-    
-    if (whoisData && (whoisData.registrar || whoisData.registrationDate || whoisData.nameServers?.length > 0)) {
-      console.log('WHOIS fallback successful');
-      return { data: whoisData, source: 'whois', availability: 'registered' };
-    }
+    try {
+      const whoisData = await queryWhois(domain);
+      
+      if (whoisData && (whoisData.registrar || whoisData.registrationDate || whoisData.nameServers?.length > 0)) {
+        console.log('WHOIS fallback successful');
+        return { data: whoisData, source: 'whois', availability: 'registered' };
+      }
 
-    if (whoisData?.domainNotFound) {
-      return { data: null, source: 'not_found', availability: 'available' };
+      if (whoisData?.domainNotFound) {
+        return { data: null, source: 'not_found', availability: 'available' };
+      }
+    } catch (whoisError: any) {
+      errors.push(whoisError?.message || 'whois_failed');
     }
     
-    return { data: null, source: 'unresolved', availability: 'unknown' };
+    const reason = classifyFailure(errors);
+    return { data: null, source: 'unresolved', availability: 'unknown', failureReason: failureReasonText(reason) };
   }
+}
+
+// 智能查询策略：带缓存 & 重试
+async function smartDomainQuery(domain: string, tld: string): Promise<{ data: any; source: string; availability: 'registered' | 'available' | 'unknown'; failureReason?: string }> {
+  // 1. 检查后台缓存
+  const cached = await getCachedResult(domain);
+  if (cached) {
+    console.log(`Cache hit for ${domain} (availability: ${cached.availability})`);
+    if (cached.availability === 'registered' && cached.payload) {
+      return { data: cached.payload, source: cached.lookup_source || 'cache', availability: 'registered' };
+    }
+    if (cached.availability === 'available') {
+      return { data: null, source: 'cache', availability: 'available' };
+    }
+    // cached failure → still try but with shorter timeout
+  }
+  
+  const errors: string[] = [];
+  const result = await smartDomainQueryInternal(domain, tld, errors);
+  
+  // 2. 保存到后台缓存
+  await saveCacheResult(domain, tld, result.data, result.availability, result.source, result.failureReason);
+  
+  // 3. 如果失败，入重试队列
+  if (result.availability === 'unknown') {
+    await enqueueRetry(domain, tld, result.failureReason || errors.join('; '));
+  }
+  
+  // 4. 异步处理重试队列（不阻塞主请求）
+  processRetryQueue().catch(() => {});
+  
+  return result;
 }
 
 serve(async (req) => {
@@ -2640,10 +2807,12 @@ serve(async (req) => {
     }
 
     if (queryResult.availability === 'unknown' || !queryResult.data) {
+      const failureReason = queryResult.failureReason || '查询暂时不可用';
       return new Response(
         JSON.stringify({
-          error: `域名 ${normalizedDomain} 暂时无法查询，请稍后重试`,
+          error: `域名 ${normalizedDomain} 查询失败：${failureReason}`,
           errorType: 'query_failed',
+          errorDetail: failureReason,
           isAvailable: false,
           pricing: pricingResult,
         }),
