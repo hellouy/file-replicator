@@ -44,6 +44,93 @@ export type Database = {
         }
         Relationships: []
       }
+      domain_lookup_cache: {
+        Row: {
+          availability: string
+          created_at: string
+          domain_name: string
+          expires_at: string
+          failure_reason: string | null
+          hit_count: number
+          id: string
+          last_failure_at: string | null
+          last_success_at: string | null
+          lookup_source: string | null
+          payload: Json
+          tld: string
+          updated_at: string
+        }
+        Insert: {
+          availability?: string
+          created_at?: string
+          domain_name: string
+          expires_at?: string
+          failure_reason?: string | null
+          hit_count?: number
+          id?: string
+          last_failure_at?: string | null
+          last_success_at?: string | null
+          lookup_source?: string | null
+          payload: Json
+          tld: string
+          updated_at?: string
+        }
+        Update: {
+          availability?: string
+          created_at?: string
+          domain_name?: string
+          expires_at?: string
+          failure_reason?: string | null
+          hit_count?: number
+          id?: string
+          last_failure_at?: string | null
+          last_success_at?: string | null
+          lookup_source?: string | null
+          payload?: Json
+          tld?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
+      domain_lookup_retry_queue: {
+        Row: {
+          attempt_count: number
+          created_at: string
+          domain_name: string
+          id: string
+          last_error: string | null
+          max_attempts: number
+          next_retry_at: string
+          status: string
+          tld: string
+          updated_at: string
+        }
+        Insert: {
+          attempt_count?: number
+          created_at?: string
+          domain_name: string
+          id?: string
+          last_error?: string | null
+          max_attempts?: number
+          next_retry_at?: string
+          status?: string
+          tld: string
+          updated_at?: string
+        }
+        Update: {
+          attempt_count?: number
+          created_at?: string
+          domain_name?: string
+          id?: string
+          last_error?: string | null
+          max_attempts?: number
+          next_retry_at?: string
+          status?: string
+          tld?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
       favorites: {
         Row: {
           created_at: string
