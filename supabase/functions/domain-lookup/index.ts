@@ -29,7 +29,7 @@ const SLOW_WHOIS_SERVERS = new Set([
   'whois.nic.tz',      // .tz - 坦桑尼亚，不稳定
   'whois.nic.cm',      // .cm - 喀麦隆，不稳定
   'whois.nic.dz',      // .dz - 阿尔及利亚，不稳定
-  'whois.nic.td',      // .td - 乍得，ECONNREFUSED
+  // whois.nic.td removed — give it a chance with longer timeouts
 ]);
 
 // 快速 WHOIS 服务器 (响应通常 <2s)
@@ -45,7 +45,12 @@ const FAST_WHOIS_SERVERS = new Set([
 ]);
 
 // 易超时 ccTLD：给更长超时但不影响其他域名速度
-const LONG_TIMEOUT_CCTLDS = new Set(['ng', 'td', 'cd', 'bn']);
+const LONG_TIMEOUT_CCTLDS = new Set([
+  'ng', 'td', 'cd', 'bn', 'mw', 'tz', 'ke', 'gh', 'ug', 'zm', 'zw',
+  'et', 'cm', 'dz', 'ao', 'sd', 'ly', 'iq', 'af', 'pk', 'bd', 'mm',
+  'kh', 'la', 'np', 'bt', 'mv', 'pg', 'fj', 'ws', 'to', 'vu',
+  'ag', 'dm', 'gd', 'gy', 'ht', 'sr', 'bb',
+]);
 
 // ==================== 完整的域名状态码映射 (支持多语言) ====================
 const STATUS_CODE_MAP: Record<string, string> = {
@@ -1195,8 +1200,8 @@ async function queryWhoisTcp(domain: string, server: string, timeout = 8000, que
     return null;
   }
   
-  // 快速服务器使用更短超时
-  const effectiveTimeout = FAST_WHOIS_SERVERS.has(server) ? 5000 : timeout;
+  // 快速服务器使用更短超时，慢速服务器给更长时间
+  const effectiveTimeout = FAST_WHOIS_SERVERS.has(server) ? 5000 : Math.max(timeout, 10000);
   
   try {
     const query = queryFormat ? queryFormat.replace('%s', domain) : domain;
@@ -1267,8 +1272,8 @@ async function queryWhoisTcp(domain: string, server: string, timeout = 8000, que
 // 尝试多种查询格式 - 速度优化版
 async function queryWhoisWithFormats(domain: string, server: string, tld: string): Promise<string | null> {
   const formats = CCTLD_QUERY_FORMATS[tld] || ['%s'];
-  const firstTimeout = LONG_TIMEOUT_CCTLDS.has(tld) ? 12000 : 8000;
-  const secondTimeout = LONG_TIMEOUT_CCTLDS.has(tld) ? 9000 : 5000;
+  const firstTimeout = LONG_TIMEOUT_CCTLDS.has(tld) ? 15000 : 10000;
+  const secondTimeout = LONG_TIMEOUT_CCTLDS.has(tld) ? 12000 : 8000;
   
   // 先尝试第一种格式
   const format = formats[0];
@@ -1317,7 +1322,8 @@ async function queryWhoisHttp(domain: string, tld: string): Promise<string | nul
     try {
       console.log(`Trying HTTP WHOIS: ${url}`);
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 8000);
+      const httpTimeout = LONG_TIMEOUT_CCTLDS.has(tld) ? 15000 : 10000;
+      const timeoutId = setTimeout(() => controller.abort(), httpTimeout);
       
       const response = await fetch(url, {
         signal: controller.signal,
@@ -1330,7 +1336,24 @@ async function queryWhoisHttp(domain: string, tld: string): Promise<string | nul
       clearTimeout(timeoutId);
       
       if (response.ok) {
-        const text = await response.text();
+        let text = await response.text();
+        
+        // 从 whois.com HTML 中提取 WHOIS 原始文本
+        if (url.includes('whois.com') && text.includes('<pre')) {
+          const preMatch = text.match(/<pre[^>]*class="df-raw"[^>]*>([\s\S]*?)<\/pre>/i) ||
+                           text.match(/<pre[^>]*>([\s\S]*?)<\/pre>/gi);
+          if (preMatch) {
+            const extracted = Array.isArray(preMatch) && typeof preMatch[0] === 'string' && preMatch[0].startsWith('<')
+              ? preMatch.map(m => m.replace(/<\/?pre[^>]*>/gi, '')).join('\n')
+              : (preMatch[1] || preMatch[0]);
+            text = extracted
+              .replace(/<[^>]+>/g, '') // strip remaining HTML tags
+              .replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&')
+              .replace(/&#(\d+);/g, (_, n) => String.fromCharCode(Number(n)));
+            console.log(`Extracted WHOIS text from HTML: ${text.length} chars`);
+          }
+        }
+        
         if (text.length > 100 && (
           text.includes('Domain') || text.includes('domain') || 
           text.includes('Registrar') || text.includes('创建日期') ||
@@ -2376,8 +2399,9 @@ async function queryRdap(domain: string): Promise<any> {
         console.log(`Trying fallback RDAP server: ${url}`);
       }
 
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 7000);
+    const controller = new AbortController();
+      const rdapTimeout = LONG_TIMEOUT_CCTLDS.has(tld) ? 12000 : 8000;
+      const timeoutId = setTimeout(() => controller.abort(), rdapTimeout);
 
       const response = await fetch(url, {
         signal: controller.signal,
@@ -2595,7 +2619,7 @@ async function enqueueRetry(domain: string, tld: string, lastError: string): Pro
       tld,
       status: 'pending',
       last_error: lastError,
-      next_retry_at: new Date(Date.now() + 5000).toISOString(), // retry in 5s
+      next_retry_at: new Date(Date.now() + 3000).toISOString(), // retry in 3s
     }, { onConflict: 'domain_name' });
   } catch (e) { console.log('Retry enqueue error:', e); }
 }
@@ -2607,8 +2631,8 @@ async function processRetryQueue(): Promise<void> {
       .select('*')
       .eq('status', 'pending')
       .lt('next_retry_at', new Date().toISOString())
-      .lt('attempt_count', 2)
-      .limit(3);
+      .lt('attempt_count', 3)
+      .limit(5);
     
     if (!items || items.length === 0) return;
     
@@ -2650,34 +2674,73 @@ async function smartDomainQueryInternal(domain: string, tld: string, errors: str
     
     const rdapPromise = queryRdap(domain).then(data => ({ type: 'rdap', data })).catch((e) => { errors.push(e?.message || 'rdap_failed'); return null; });
     const whoisPromise = queryWhois(domain).then(data => data ? { type: 'whois', data } : null).catch((e) => { errors.push(e?.message || 'whois_failed'); return null; });
-    const timeout = new Promise<null>((resolve) => setTimeout(() => { errors.push('timeout'); resolve(null); }, 8000));
+    // 同时发起 HTTP WHOIS 作为并行兜底
+    const httpWhoisPromise = queryWhoisHttp(domain, tld).then(text => {
+      if (text) {
+        const parsed = parseWhoisText(text, domain);
+        if (parsed.registrar || parsed.registrationDate || parsed.nameServers?.length > 0) {
+          return { type: 'http_whois', data: parsed };
+        }
+      }
+      return null;
+    }).catch(() => null);
+    
+    // 给慢速 ccTLD 更长的整体超时
+    const overallTimeout = LONG_TIMEOUT_CCTLDS.has(tld) ? 25000 : 15000;
+    const timeout = new Promise<null>((resolve) => setTimeout(() => { errors.push('timeout'); resolve(null); }, overallTimeout));
     
     try {
-      const results = await Promise.all([
-        Promise.race([rdapPromise, timeout]),
-        Promise.race([whoisPromise, timeout])
+      // 使用 Promise.any 风格：任何一个成功就返回
+      const raceResult = await new Promise<{ type: string; data: any } | null>((resolve) => {
+        let resolved = false;
+        const tryResolve = (result: { type: string; data: any } | null) => {
+          if (resolved) return;
+          if (result && result.data) {
+            // 对 RDAP/WHOIS 结果检查有效性
+            if (result.type === 'rdap') {
+              const parsed = parseRdapResponse(result.data, result.data);
+              if (parsed.registrar || parsed.registrationDate || parsed.nameServers?.length > 0) {
+                resolved = true;
+                resolve({ type: 'rdap', data: parsed });
+                return;
+              }
+            } else if (result.type === 'whois') {
+              if (result.data.registrar || result.data.registrationDate || result.data.nameServers?.length > 0) {
+                resolved = true;
+                resolve(result);
+                return;
+              }
+            } else if (result.type === 'http_whois') {
+              resolved = true;
+              resolve(result);
+              return;
+            }
+          }
+        };
+        
+        rdapPromise.then(tryResolve);
+        whoisPromise.then(tryResolve);
+        httpWhoisPromise.then(tryResolve);
+        timeout.then(() => { if (!resolved) { resolved = true; resolve(null); } });
+        
+        // 当所有查询都完成时如果还没resolve，resolve null
+        Promise.allSettled([rdapPromise, whoisPromise, httpWhoisPromise]).then(() => {
+          if (!resolved) { resolved = true; resolve(null); }
+        });
+      });
+      
+      if (raceResult && raceResult.data) {
+        console.log(`Using ${raceResult.type} result (parallel query)`);
+        return { data: raceResult.data, source: raceResult.type, availability: 'registered' as const };
+      }
+      
+      // 检查是否 domain not found
+      const [rdapResult, whoisResult] = await Promise.all([
+        rdapPromise.catch(() => null),
+        whoisPromise.catch(() => null),
       ]);
-      
-      const rdapResult = results[0];
-      const whoisResult = results[1];
-      
-      if (rdapResult && rdapResult.data) {
-        const parsed = parseRdapResponse(rdapResult.data, rdapResult.data);
-        if (parsed.registrar || parsed.registrationDate || parsed.nameServers?.length > 0) {
-          console.log('Using RDAP result (parallel query)');
-          return { data: parsed, source: 'rdap', availability: 'registered' };
-        }
-      }
-      
-      if (whoisResult && whoisResult.data) {
-        if (whoisResult.data.registrar || whoisResult.data.registrationDate || whoisResult.data.nameServers?.length > 0) {
-          console.log('Using WHOIS result (parallel query)');
-          return { data: whoisResult.data, source: 'whois', availability: 'registered' };
-        }
-      }
-      
       if (rdapResult?.data === null || whoisResult?.data?.domainNotFound) {
-        return { data: null, source: 'not_found', availability: 'available' };
+        return { data: null, source: 'not_found', availability: 'available' as const };
       }
     } catch (e: any) {
       errors.push(e?.message || 'parallel_failed');
@@ -2685,7 +2748,7 @@ async function smartDomainQueryInternal(domain: string, tld: string, errors: str
     }
     
     const reason = classifyFailure(errors);
-    return { data: null, source: 'unresolved', availability: 'unknown', failureReason: failureReasonText(reason) };
+    return { data: null, source: 'unresolved', availability: 'unknown' as const, failureReason: failureReasonText(reason) };
   }
   
   // 对于 gTLD，RDAP 优先
@@ -2724,9 +2787,26 @@ async function smartDomainQueryInternal(domain: string, tld: string, errors: str
   }
 }
 
-// 智能查询策略：带缓存 & 重试
+// 获取过期/stale的缓存结果（用于 stale-while-revalidate）
+async function getStaleCachedResult(domain: string): Promise<any | null> {
+  try {
+    const { data } = await supabase
+      .from('domain_lookup_cache')
+      .select('*')
+      .eq('domain_name', domain)
+      .eq('availability', 'registered')
+      .maybeSingle();
+    if (data && data.payload && Object.keys(data.payload).length > 0) {
+      console.log(`Stale cache hit for ${domain} (expired at ${data.expires_at})`);
+      return data;
+    }
+  } catch (e) { console.log('Stale cache read error:', e); }
+  return null;
+}
+
+// 智能查询策略：带缓存 & 重试 & stale-while-revalidate
 async function smartDomainQuery(domain: string, tld: string): Promise<{ data: any; source: string; availability: 'registered' | 'available' | 'unknown'; failureReason?: string }> {
-  // 1. 检查后台缓存
+  // 1. 检查后台缓存（未过期）
   const cached = await getCachedResult(domain);
   if (cached) {
     console.log(`Cache hit for ${domain} (availability: ${cached.availability})`);
@@ -2736,21 +2816,33 @@ async function smartDomainQuery(domain: string, tld: string): Promise<{ data: an
     if (cached.availability === 'available') {
       return { data: null, source: 'cache', availability: 'available' };
     }
-    // cached failure → still try but with shorter timeout
+    // cached failure → still try fresh query
   }
   
   const errors: string[] = [];
   const result = await smartDomainQueryInternal(domain, tld, errors);
   
-  // 2. 保存到后台缓存
+  // 2. 如果查询失败，尝试返回过期的缓存数据（stale-while-revalidate）
+  if (result.availability === 'unknown' || !result.data) {
+    const stale = await getStaleCachedResult(domain);
+    if (stale && stale.payload) {
+      console.log(`Using stale cache for ${domain} (stale-while-revalidate)`);
+      // 异步入重试队列刷新数据，不阻塞
+      enqueueRetry(domain, tld, result.failureReason || errors.join('; ')).catch(() => {});
+      processRetryQueue().catch(() => {});
+      return { data: stale.payload, source: 'cache(stale)', availability: 'registered' };
+    }
+  }
+  
+  // 3. 保存到后台缓存
   await saveCacheResult(domain, tld, result.data, result.availability, result.source, result.failureReason);
   
-  // 3. 如果失败，入重试队列
+  // 4. 如果失败，入重试队列
   if (result.availability === 'unknown') {
     await enqueueRetry(domain, tld, result.failureReason || errors.join('; '));
   }
   
-  // 4. 异步处理重试队列（不阻塞主请求）
+  // 5. 异步处理重试队列（不阻塞主请求）
   processRetryQueue().catch(() => {});
   
   return result;
