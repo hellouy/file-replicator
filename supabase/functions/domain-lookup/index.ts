@@ -44,6 +44,17 @@ const FAST_WHOIS_SERVERS = new Set([
   'whois.cloudflare.com',
 ]);
 
+// 已知的 ccTLD RDAP 服务器（IANA bootstrap 中缺失的）
+const CCTLD_RDAP_OVERRIDES: Record<string, string> = {
+  'td': 'https://rdap.nic.td/',
+  'cd': 'https://rdap.nic.cd/',
+  'bn': 'https://rdap.bnnic.bn/',
+  'ng': 'https://rdap.nic.net.ng/',
+  'ke': 'https://rdap.kenic.or.ke/',
+  'tz': 'https://rdap.tznic.or.tz/',
+  'mw': 'https://rdap.nic.mw/',
+};
+
 // 易超时 ccTLD：给更长超时但不影响其他域名速度
 const LONG_TIMEOUT_CCTLDS = new Set([
   'ng', 'td', 'cd', 'bn', 'mw', 'tz', 'ke', 'gh', 'ug', 'zm', 'zw',
@@ -2373,9 +2384,12 @@ function findRegistrar(entities: RdapEntity[]): { name: string; ianaId?: string 
 async function queryRdap(domain: string): Promise<any> {
   const tld = getTld(domain);
   const bootstrap = await getRdapBootstrap();
-  const rdapServer = bootstrap[tld];
+  // 优先使用 IANA bootstrap，其次使用手动维护的 ccTLD RDAP 覆盖表
+  const rdapServer = bootstrap[tld] || CCTLD_RDAP_OVERRIDES[tld];
 
   const fallbackServers = [
+    // 如果 bootstrap 和 override 都有，确保 override 也被尝试
+    ...(CCTLD_RDAP_OVERRIDES[tld] && bootstrap[tld] ? [CCTLD_RDAP_OVERRIDES[tld]] : []),
     'https://rdap.org/',
     'https://rdap.verisign.com/com/v1/',
   ];
