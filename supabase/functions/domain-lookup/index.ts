@@ -16,6 +16,16 @@ let whoisServerCache: Record<string, string> = {};
 let whoisCacheTime = 0;
 const WHOIS_CACHE_TTL = 3600000; // 1 hour
 
+// GitHub WHOIS 服务器列表 (动态补全)
+const GITHUB_WHOIS_SERVERS_URL = 'https://raw.githubusercontent.com/WooMai/whois-servers/master/list.json';
+let githubWhoisServers: Record<string, string | null> | null = null;
+let githubWhoisFetchTime = 0;
+const GITHUB_WHOIS_CACHE_TTL = 3600000 * 6; // 6 hours
+
+// IANA RDAP 数据
+const IANA_RDAP_URL = 'https://data.iana.org/rdap/dns.json';
+
+
 // 已知不可用/超慢的 WHOIS 服务器 - 跳过这些直接用 HTTP 兜底
 const SLOW_WHOIS_SERVERS = new Set([
   'whois.pnina.ps',    // .ps - 经常连接被拒绝
@@ -44,7 +54,7 @@ const FAST_WHOIS_SERVERS = new Set([
   'whois.cloudflare.com',
 ]);
 
-// 已知的 ccTLD RDAP 服务器（IANA bootstrap 中缺失的）
+// 已知的 ccTLD RDAP 服务器（IANA bootstrap 中缺失的）- 扩展版
 const CCTLD_RDAP_OVERRIDES: Record<string, string> = {
   'td': 'https://rdap.nic.td/',
   'cd': 'https://rdap.nic.cd/',
@@ -53,6 +63,36 @@ const CCTLD_RDAP_OVERRIDES: Record<string, string> = {
   'ke': 'https://rdap.kenic.or.ke/',
   'tz': 'https://rdap.tznic.or.tz/',
   'mw': 'https://rdap.nic.mw/',
+  'gh': 'https://rdap.nic.gh/',
+  'ug': 'https://rdap.nic.ug/',
+  'rw': 'https://rdap.ricta.org.rw/',
+  'zm': 'https://rdap.zicta.zm/',
+  'ci': 'https://rdap.nic.ci/',
+  'sn': 'https://rdap.nic.sn/',
+  'cm': 'https://rdap.netcom.cm/',
+  'mg': 'https://rdap.nic.mg/',
+  'bj': 'https://rdap.nic.bj/',
+  'bf': 'https://rdap.nic.bf/',
+  'ml': 'https://rdap.nic.ml/',
+  'tg': 'https://rdap.nic.tg/',
+  'gn': 'https://rdap.nic.gn/',
+  'ga': 'https://rdap.nic.ga/',
+  'cg': 'https://rdap.nic.cg/',
+  'ne': 'https://rdap.nic.ne/',
+  'cf': 'https://rdap.nic.cf/',
+  'ly': 'https://rdap.nic.ly/',
+  'sd': 'https://rdap.nic.sd/',
+  'et': 'https://rdap.nic.et/',
+  'dj': 'https://rdap.nic.dj/',
+  'so': 'https://rdap.nic.so/',
+  'mr': 'https://rdap.nic.mr/',
+  'gm': 'https://rdap.nic.gm/',
+  'sl': 'https://rdap.nic.sl/',
+  'lr': 'https://rdap.nic.lr/',
+  'bi': 'https://rdap.nic.bi/',
+  'ao': 'https://rdap.nic.ao/',
+  'mz': 'https://rdap.nic.mz/',
+  'zw': 'https://rdap.zispa.co.zw/',
 };
 
 // 易超时 ccTLD：给更长超时但不影响其他域名速度
@@ -818,10 +858,10 @@ const DNS_PROVIDERS: Record<string, { name: string; website: string }> = {
   'hkirc': { name: 'HKIRC (.hk)', website: 'https://www.hkirc.hk' },
 };
 
-// RDAP Bootstrap URL
-const RDAP_BOOTSTRAP_URL = 'https://data.iana.org/rdap/dns.json';
+// RDAP Bootstrap URL - 使用顶部定义的 IANA_RDAP_URL
+const RDAP_BOOTSTRAP_URL = IANA_RDAP_URL;
 
-// Cache for RDAP bootstrap data
+// Cache for RDAP bootstrap data (包含 IANA + 手动覆盖)
 let rdapBootstrapCache: Record<string, string> | null = null;
 let bootstrapCacheTime = 0;
 const CACHE_TTL = 3600000;
@@ -972,11 +1012,22 @@ function parseDateString(dateStr: string): Date | null {
         date = new Date(cleanStr);
       }
     }
-    // 5. 英文日期: 20-Mar-2024 13:16:16 or 12 May 2023
-    else if (/^\d{1,2}[\s-]\w+[\s-]\d{4}/.test(cleanStr)) {
+    // 5. 长数字格式: 20230512 (某些注册局)
+    else if (/^\d{8}$/.test(cleanStr)) {
+      const yyyy = cleanStr.slice(0, 4);
+      const mm = cleanStr.slice(4, 6);
+      const dd = cleanStr.slice(6, 8);
+      date = new Date(`${yyyy}-${mm}-${dd}T00:00:00Z`);
+    }
+    // 6. 英文日期: 20-Mar-2024 13:16:16 or 12 May 2023 or May 12, 2023
+    else if (/^\d{1,2}[\s-]\w+[\s-]\d{4}/.test(cleanStr) || /^\w+\s+\d{1,2},?\s+\d{4}/.test(cleanStr)) {
       date = new Date(cleanStr);
     }
-    // 6. 其他格式尝试直接解析
+    // 7. 带时区偏移: 2023-05-12 17:05:28+08:00
+    else if (/^\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}[+-]\d{2}:\d{2}$/.test(cleanStr)) {
+      date = new Date(cleanStr.replace(' ', 'T'));
+    }
+    // 8. 其他格式尝试直接解析
     else {
       date = new Date(cleanStr);
     }
@@ -1078,15 +1129,46 @@ function getRemainingDays(expirationDate: string): number | null {
 
 // ==================== WHOIS 查询功能 ====================
 
-// 从数据库获取 WHOIS 服务器
+// 从 GitHub 动态获取 WHOIS 服务器列表
+async function fetchGithubWhoisServers(): Promise<Record<string, string | null>> {
+  const now = Date.now();
+  if (githubWhoisServers && (now - githubWhoisFetchTime) < GITHUB_WHOIS_CACHE_TTL) {
+    return githubWhoisServers;
+  }
+  
+  try {
+    console.log('Fetching WHOIS servers from GitHub...');
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 8000);
+    const response = await fetch(GITHUB_WHOIS_SERVERS_URL, {
+      signal: controller.signal,
+      headers: { 'Accept': 'application/json', 'User-Agent': 'DomainLookup/1.0' }
+    });
+    clearTimeout(timeoutId);
+    
+    if (response.ok) {
+      const data = await response.json();
+      githubWhoisServers = data;
+      githubWhoisFetchTime = now;
+      console.log(`Loaded ${Object.keys(data).length} WHOIS servers from GitHub`);
+      return data;
+    }
+  } catch (e) {
+    console.log('Failed to fetch GitHub WHOIS servers:', e);
+  }
+  return githubWhoisServers || {};
+}
+
+// 从数据库获取 WHOIS 服务器，失败时从 GitHub 列表动态补全
 async function getWhoisServerFromDb(tld: string): Promise<string | null> {
   const now = Date.now();
   
-  // 检查缓存
+  // 检查内存缓存
   if (whoisServerCache[tld] && (now - whoisCacheTime) < WHOIS_CACHE_TTL) {
     return whoisServerCache[tld];
   }
   
+  // 1. 先查数据库
   try {
     const { data, error } = await supabase
       .from('whois_servers')
@@ -1094,19 +1176,32 @@ async function getWhoisServerFromDb(tld: string): Promise<string | null> {
       .eq('tld', tld)
       .single();
     
-    if (error || !data?.server) {
-      console.log(`No WHOIS server found in DB for .${tld}`);
-      return null;
+    if (!error && data?.server) {
+      whoisServerCache[tld] = data.server;
+      whoisCacheTime = now;
+      console.log(`Found WHOIS server for .${tld} in DB: ${data.server}`);
+      return data.server;
     }
-    
-    whoisServerCache[tld] = data.server;
-    whoisCacheTime = now;
-    console.log(`Found WHOIS server for .${tld}: ${data.server}`);
-    return data.server;
   } catch (error) {
-    console.error(`Error fetching WHOIS server for .${tld}:`, error);
-    return null;
+    console.error(`Error fetching WHOIS server for .${tld} from DB:`, error);
   }
+  
+  // 2. 数据库没有，从 GitHub 动态补全
+  try {
+    const githubServers = await fetchGithubWhoisServers();
+    const server = githubServers[tld];
+    if (server) {
+      whoisServerCache[tld] = server;
+      whoisCacheTime = now;
+      console.log(`Found WHOIS server for .${tld} from GitHub: ${server}`);
+      return server;
+    }
+  } catch (e) {
+    console.log(`GitHub WHOIS fallback failed for .${tld}:`, e);
+  }
+  
+  console.log(`No WHOIS server found for .${tld}`);
+  return null;
 }
 
 // ccTLD 特殊查询格式映射
@@ -1404,22 +1499,27 @@ function parseWhoisText(text: string, domain: string): any {
       'Registrar:', 'Sponsoring Registrar:', 'registrar:', 'Registrar Name:', 
       'Registrar Organization:', 'Registrar Organisation:', 'Registrar',
       'Registered through:', 'Registration Service Provider:',
+      'Registrar Handle:', 'Sponsoring Registrar IANA ID:',
+      // 不规则格式
+      'registrar-name:', 'Registrar_name:', 'registrar name:',
       // 中文
       '注册商:', '注册服务商:', '域名注册商:',
       // 法语
-      'Bureau d\'enregistrement:', 'Registraire:',
+      'Bureau d\'enregistrement:', 'Registraire:', 'Agent:',
       // 德语
       'Registrar:', 'Vergabestelle:',
-      // 西班牙语
-      'Registrador:',
-      // 葡萄牙语
+      // 西班牙语/葡萄牙语
       'Registrador:',
       // 俄语
       'Регистратор:',
       // 日语
-      '登録者:',
+      '登録者:', '指定事業者名:',
       // 韩语
       '등록대행자:',
+      // 阿拉伯语
+      'المسجل:',
+      // 土耳其语
+      'Kayıt Firması:',
     ],
     registrationDate: [
       // 英语
@@ -1427,10 +1527,12 @@ function parseWhoisText(text: string, domain: string): any {
       'created:', 'Domain Create Date:', 'Created On:', 'Creation date:',
       'Registered:', 'Registered on:', 'Domain registered:', 'Registration Time:',
       'domain_datecreate:', 'Created Date:', 'Registered Date:',
-      // .mw 格式
-      'registered:',
+      'Commencement Date:', 'First registered:',
+      // 不规则格式
+      'registered:', 'creation-date:', 'create-date:', 'domain_dateregistered:',
+      'Registration_date:', 'Created on:', 'creation_date:',
       // 中文
-      '注册日期:', '创建日期:', '注册时间:', '域名注册时间:',
+      '注册日期:', '创建日期:', '注册时间:', '域名注册时间:', '签发日期:',
       // 法语
       'Date de création:', 'Date de creation:', 'Créé le:', 'Cree le:',
       'Date d\'enregistrement:',
@@ -1450,6 +1552,10 @@ function parseWhoisText(text: string, domain: string): any {
       'Geregistreerd op:',
       // 意大利语
       'Data di creazione:',
+      // 土耳其语
+      'Kayıt Tarihi:', 'Oluşturulma Tarihi:',
+      // 阿拉伯语
+      'تاريخ التسجيل:',
     ],
     expirationDate: [
       // 英语
@@ -1458,13 +1564,15 @@ function parseWhoisText(text: string, domain: string): any {
       'paid-till:', 'Valid Until:', 'Validity:', 'Expiration Time:',
       'Domain Expiration Date:', 'Renewal Date:', 'Renewal date:',
       'Expire Date:', 'Expires date:', 'Expiration:', 'free-date:',
-      // .mw / .bn 格式
-      'expire:', 'Expiration Date:',
+      // 不规则格式
+      'expire:', 'expiry-date:', 'expire-date:', 'expiration-date:',
+      'domain_dateexpire:', 'Expiration_date:', 'expiry_date:',
+      'Validity:', 'Valid till:', 'End date:',
       // 中文
-      '过期日期:', '到期日期:', '过期时间:', '域名到期时间:', '有效期至:',
+      '过期日期:', '到期日期:', '过期时间:', '域名到期时间:', '有效期至:', '有效期:',
       // 法语
-      'Date d\'expiration:', 'Date d\'expiration:', 'Expire le:',
-      'Date d\'échéance:', 'Date de fin:',
+      'Date d\'expiration:', 'Expire le:',
+      'Date d\'échéance:', 'Date de fin:', 'Echéance:',
       // 德语
       'Gültig bis:', 'Gultig bis:', 'Ablaufdatum:', 'Enddatum:',
       // 西班牙语
@@ -1472,25 +1580,30 @@ function parseWhoisText(text: string, domain: string): any {
       // 葡萄牙语
       'Data de expiração:', 'Data de vencimento:',
       // 俄语
-      'Дата окончания:', 'Оплачен до:',
+      'Дата окончания:', 'Оплачен до:', 'Истекает:',
       // 日语
-      '有効期限:', '満了日:',
+      '有効期限:', '満了日:', '契約終了日:',
       // 韩语
       '등록 만료일:', '만료일:',
       // 荷兰语
       'Vervalt op:',
       // 意大利语
       'Data di scadenza:',
+      // 土耳其语
+      'Bitiş Tarihi:',
+      // 阿拉伯语
+      'تاريخ الانتهاء:',
     ],
     lastUpdated: [
       // 英语
       'Updated Date:', 'Last Updated:', 'Last Modified:', 'Modified:',
       'Updated:', 'Last Update:', 'Domain Last Updated Date:', 'Changed:',
       'Last updated:', 'Last update of RDAP database:',
-      // .bn 格式
-      'Modified Date:',
+      // 不规则格式
+      'Modified Date:', 'modified:', 'update-date:', 'last-update:',
+      'domain_dateupdated:', 'Updated_date:',
       // 中文
-      '更新日期:', '最后更新:', '最近更新:',
+      '更新日期:', '最后更新:', '最近更新:', '修改时间:',
       // 法语
       'Dernière modification:', 'Derniere modification:', 'Mis à jour:',
       'Dernière mise à jour:', 'Modifié le:',
@@ -1502,6 +1615,8 @@ function parseWhoisText(text: string, domain: string): any {
       '最終更新:', '更新日:',
       // 韩语
       '최근 수정일:',
+      // 土耳其语
+      'Son Güncelleme Tarihi:',
     ],
     nameServer: [
       // 英语
@@ -1834,27 +1949,43 @@ function parseWhoisText(text: string, domain: string): any {
   
   // ==================== 正则后备提取 (当标准解析失败时) ====================
   
-  // 日期正则模式 (支持多种格式)
+  // 日期正则模式 (支持多种格式) - 超级增强版
   const datePatterns = [
-    // ISO 8601: 2025-05-19T07:29:45.086917Z
-    /(\d{4}-\d{2}-\d{2}T[\d:.]+Z?)/,
+    // ISO 8601: 2025-05-19T07:29:45.086917Z or 2025-05-19T07:29:45+08:00
+    /(\d{4}-\d{2}-\d{2}T[\d:.]+(?:Z|[+-]\d{2}:\d{2})?)/,
     // 标准格式: 2023-05-12 17:05:28
     /(\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2})/,
     // 简短格式: 2023-05-12
     /(\d{4}-\d{2}-\d{2})/,
-    // 欧洲格式: 12/05/2023 or 12.05.2023
+    // 美国格式: 05/12/2023 or 5/12/2023
+    /(\d{1,2}\/\d{1,2}\/\d{4})/,
+    // 欧洲格式: 12.05.2023 or 12/05/2023
     /(\d{2}[\/\.]\d{2}[\/\.]\d{4})/,
-    // 文字格式: 12 May 2023
-    /(\d{1,2}\s+\w+\s+\d{4})/,
+    // 长数字: 20230512 (某些注册局)
+    /\b(\d{4})(\d{2})(\d{2})\b/,
+    // 文字格式: 12 May 2023, May 12 2023, 12-May-2023
+    /(\d{1,2}[\s-]\w{3,9}[\s-]\d{4})/,
+    /(\w{3,9}\s+\d{1,2},?\s+\d{4})/,
+    // 带时区: 2023-05-12 17:05:28 UTC
+    /(\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}\s*\w{0,5})/,
   ];
   
-  // 如果没有注册日期，尝试正则提取
+  // 如果没有注册日期，尝试正则提取 - 超级增强版
   if (!result.registrationDate) {
     const creationPatterns = [
       /Date de cr[ée]ation[:\s]+([^\r\n]+)/i,
-      /Cre(?:ated|ation)[:\s]+([^\r\n]+)/i,
-      /Registration[:\s]+(?:Date[:\s]+)?([^\r\n]+)/i,
+      /Cre(?:ated?|ation)\s*(?:Date|On)?[:\s]+([^\r\n]+)/i,
+      /Registration\s*(?:Date|Time)?[:\s]+([^\r\n]+)/i,
+      /Registered?\s*(?:on|date)?[:\s]+([^\r\n]+)/i,
       /注册(?:日期|时间)[:\s]*([^\r\n]+)/i,
+      /创建(?:日期|时间)[:\s]*([^\r\n]+)/i,
+      /domain_datecreate[:\s]+([^\r\n]+)/i,
+      /Erstellt\s*(?:am)?[:\s]+([^\r\n]+)/i,
+      /Дата\s*регистрации[:\s]+([^\r\n]+)/i,
+      /登録年月日[:\s]*([^\r\n]+)/i,
+      /Data di creazione[:\s]+([^\r\n]+)/i,
+      /Fecha de (?:creación|creacion|registro)[:\s]+([^\r\n]+)/i,
+      /Geregistreerd op[:\s]+([^\r\n]+)/i,
     ];
     
     for (const pattern of creationPatterns) {
@@ -1869,7 +2000,6 @@ function parseWhoisText(text: string, domain: string): any {
           }
         }
         if (result.registrationDate) break;
-        // 如果没有匹配日期格式，直接使用提取的值
         if (!result.registrationDate && dateStr.length < 50) {
           result.registrationDate = dateStr;
         }
@@ -1878,13 +2008,24 @@ function parseWhoisText(text: string, domain: string): any {
     }
   }
   
-  // 如果没有过期日期，尝试正则提取
+  // 如果没有过期日期，尝试正则提取 - 超级增强版
   if (!result.expirationDate) {
     const expirationPatterns = [
-      /Date d['']expiration[:\s]+([^\r\n]+)/i,
-      /Expir(?:y|ation|es)[:\s]+(?:Date[:\s]+)?([^\r\n]+)/i,
-      /Valid Until[:\s]+([^\r\n]+)/i,
+      /Date d[''']expiration[:\s]+([^\r\n]+)/i,
+      /Expir(?:y|ation|es?)\s*(?:Date|On)?[:\s]+([^\r\n]+)/i,
+      /Valid\s*(?:Until|Till|To)[:\s]+([^\r\n]+)/i,
+      /Renewal\s*Date[:\s]+([^\r\n]+)/i,
+      /paid[- ]till[:\s]+([^\r\n]+)/i,
+      /free[- ]date[:\s]+([^\r\n]+)/i,
       /(?:过期|到期)(?:日期|时间)[:\s]*([^\r\n]+)/i,
+      /有效期[至到][:\s]*([^\r\n]+)/i,
+      /Gültig\s*bis[:\s]+([^\r\n]+)/i,
+      /Ablaufdatum[:\s]+([^\r\n]+)/i,
+      /Оплачен\s*до[:\s]+([^\r\n]+)/i,
+      /有効期限[:\s]*([^\r\n]+)/i,
+      /Data di scadenza[:\s]+([^\r\n]+)/i,
+      /Fecha de (?:expiración|vencimiento|caducidad)[:\s]+([^\r\n]+)/i,
+      /Vervalt\s*op[:\s]+([^\r\n]+)/i,
     ];
     
     for (const pattern of expirationPatterns) {
@@ -1907,12 +2048,15 @@ function parseWhoisText(text: string, domain: string): any {
     }
   }
   
-  // 如果没有更新日期，尝试正则提取
+  // 如果没有更新日期，尝试正则提取 - 增强版
   if (!result.lastUpdated) {
     const updatePatterns = [
-      /Derni[èe]re modification[:\s]+([^\r\n]+)/i,
-      /(?:Last\s+)?(?:Updated?|Modified)[:\s]+([^\r\n]+)/i,
+      /Derni[èe]re\s*(?:modification|mise à jour)[:\s]+([^\r\n]+)/i,
+      /(?:Last\s+)?(?:Updated?|Modified|Changed)[:\s]+([^\r\n]+)/i,
       /(?:最后|最近)(?:更新|修改)[:\s]*([^\r\n]+)/i,
+      /Aktualisiert\s*(?:am)?[:\s]+([^\r\n]+)/i,
+      /最終更新[:\s]*([^\r\n]+)/i,
+      /최근\s*수정일[:\s]*([^\r\n]+)/i,
     ];
     
     for (const pattern of updatePatterns) {
@@ -2287,8 +2431,11 @@ async function getRdapBootstrap(): Promise<Record<string, string>> {
   }
 
   try {
-    console.log('Fetching RDAP bootstrap data...');
-    const response = await fetch(RDAP_BOOTSTRAP_URL);
+    console.log('Fetching RDAP bootstrap data from IANA...');
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 10000);
+    const response = await fetch(RDAP_BOOTSTRAP_URL, { signal: controller.signal });
+    clearTimeout(timeoutId);
     const data = await response.json();
     
     const tldToServer: Record<string, string> = {};
@@ -2305,13 +2452,28 @@ async function getRdapBootstrap(): Promise<Record<string, string>> {
       }
     }
     
+    // 合并手动维护的 ccTLD RDAP 覆盖表（仅在 IANA 没有时补全）
+    for (const [tld, server] of Object.entries(CCTLD_RDAP_OVERRIDES)) {
+      if (!tldToServer[tld]) {
+        tldToServer[tld] = server;
+        console.log(`RDAP override applied for .${tld}: ${server}`);
+      }
+    }
+    
     rdapBootstrapCache = tldToServer;
     bootstrapCacheTime = now;
-    console.log(`Loaded ${Object.keys(tldToServer).length} TLD mappings`);
+    console.log(`Loaded ${Object.keys(tldToServer).length} RDAP TLD mappings (IANA + overrides)`);
     return tldToServer;
   } catch (error) {
     console.error('Failed to fetch RDAP bootstrap:', error);
-    return rdapBootstrapCache || {};
+    // 如果获取失败，至少返回覆盖表
+    if (!rdapBootstrapCache) {
+      const fallback: Record<string, string> = { ...CCTLD_RDAP_OVERRIDES };
+      rdapBootstrapCache = fallback;
+      bootstrapCacheTime = now;
+      return fallback;
+    }
+    return rdapBootstrapCache;
   }
 }
 
@@ -2862,7 +3024,16 @@ async function smartDomainQuery(domain: string, tld: string): Promise<{ data: an
   return result;
 }
 
+// 预热缓存：启动时异步加载 GitHub WHOIS 服务器列表和 RDAP bootstrap
+const preloadPromise = Promise.all([
+  fetchGithubWhoisServers().catch(() => {}),
+  getRdapBootstrap().catch(() => {}),
+]).then(() => console.log('Cache preload completed'));
+
 serve(async (req) => {
+  // 确保预热完成（通常首次请求时已完成）
+  await preloadPromise;
+  
   if (req.method === 'OPTIONS') {
     return new Response('ok', { headers: corsHeaders });
   }
