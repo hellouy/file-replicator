@@ -1,0 +1,1 @@
+DELETE FROM domain_lookup_cache WHERE domain_name IN ('x.gd', 'y.td', 'www.ls', 'www.me', 'nic.bi', 'g.gd');
