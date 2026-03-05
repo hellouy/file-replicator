@@ -1,0 +1,1 @@
+DELETE FROM domain_lookup_cache WHERE domain_name IN ('nic.bi', 'www.me');

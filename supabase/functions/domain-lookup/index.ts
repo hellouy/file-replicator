@@ -1620,11 +1620,10 @@ function parseWhoisText(text: string, domain: string): any {
   // ==================== 多语言字段映射 (超级扩展版) ====================
   const fieldMappings: Record<string, string[]> = {
     registrar: [
-      // 英语
+      // 英语 - 注意排除 "Registrar WHOIS Server:" 和 "Registrar URL:"
       'Registrar:', 'Sponsoring Registrar:', 'registrar:', 'Registrar Name:', 
-      'Registrar Organization:', 'Registrar Organisation:', 'Registrar',
+      'Registrar Organization:', 'Registrar Organisation:',
       'Registered through:', 'Registration Service Provider:',
-      'Registrar Handle:', 'Sponsoring Registrar IANA ID:',
       // 不规则格式
       'registrar-name:', 'Registrar_name:', 'registrar name:',
       // 中文
@@ -1632,7 +1631,7 @@ function parseWhoisText(text: string, domain: string): any {
       // 法语
       'Bureau d\'enregistrement:', 'Registraire:', 'Agent:',
       // 德语
-      'Registrar:', 'Vergabestelle:',
+      'Vergabestelle:',
       // 西班牙语/葡萄牙语
       'Registrador:',
       // 俄语
@@ -1912,6 +1911,18 @@ function parseWhoisText(text: string, domain: string): any {
   // 辅助函数: 检测字段匹配
   const matchField = (line: string, patterns: string[]): string | null => {
     const lowerLine = line.toLowerCase();
+    
+    // 排除不应匹配的行 (这些行容易被误匹配)
+    const excludePatterns = [
+      'registrar whois server:', 'registrar url:', 'registrar abuse',
+      'registrar registration expiration', 'registrar iana id:',
+      'url of the icann', 'terms of use:', 'for more information',
+      'whois database:', 'last update of whois', 'last update of rdap',
+    ];
+    for (const exclude of excludePatterns) {
+      if (lowerLine.includes(exclude)) return null;
+    }
+    
     for (const pattern of patterns) {
       const lowerPattern = pattern.toLowerCase().replace(':', '');
       // 尝试精确匹配带冒号的格式
@@ -1921,8 +1932,8 @@ function parseWhoisText(text: string, domain: string): any {
           return cleanValue(line.substring(colonIndex + 1));
         }
       }
-      // 尝试匹配不带冒号的格式
-      if (lowerLine.startsWith(lowerPattern) && line.includes(':')) {
+      // 尝试匹配不带冒号的格式（仅当pattern本身有冒号时）
+      if (pattern.includes(':') && lowerLine.startsWith(lowerPattern) && line.includes(':')) {
         const colonIndex = line.indexOf(':');
         if (colonIndex > 0) {
           return cleanValue(line.substring(colonIndex + 1));
@@ -2002,7 +2013,8 @@ function parseWhoisText(text: string, domain: string): any {
       const nsParts = rawNs
         .split(/[\s,;]+/)
         .map((part) => part.toLowerCase().trim().replace(/\.$/, '').replace(/[^\w.-]/g, ''))
-        .filter((part) => part.includes('.') && part.length > 3 && part.length < 100);
+        .filter((part) => part.includes('.') && part.length > 3 && part.length < 100 && 
+                !part.startsWith('http') && !part.includes('icann') && !part.includes('://'));
 
       for (const cleanNs of nsParts) {
         if (!result.nameServers.includes(cleanNs)) {
@@ -2158,6 +2170,7 @@ function parseWhoisText(text: string, domain: string): any {
       const match = text.match(pattern);
       if (match) {
         const dateStr = match[1].trim();
+        if (isGarbageValue(dateStr)) continue;
         for (const datePattern of datePatterns) {
           const dateMatch = dateStr.match(datePattern);
           if (dateMatch) {
@@ -2198,6 +2211,7 @@ function parseWhoisText(text: string, domain: string): any {
       const match = text.match(pattern);
       if (match) {
         const dateStr = match[1].trim();
+        if (isGarbageValue(dateStr)) continue;
         for (const datePattern of datePatterns) {
           const dateMatch = dateStr.match(datePattern);
           if (dateMatch) {
@@ -2229,6 +2243,7 @@ function parseWhoisText(text: string, domain: string): any {
       const match = text.match(pattern);
       if (match) {
         const dateStr = match[1].trim();
+        if (isGarbageValue(dateStr)) continue;
         for (const datePattern of datePatterns) {
           const dateMatch = dateStr.match(datePattern);
           if (dateMatch) {
@@ -2276,8 +2291,10 @@ function parseWhoisText(text: string, domain: string): any {
         let ns = match[1].trim().toLowerCase();
         // 清理常见前缀和后缀
         ns = ns.replace(/^:\s*/, '').replace(/\s+.*$/, '').trim();
-        // 验证是否为有效域名格式
-        if (ns && ns.includes('.') && !ns.includes(' ') && ns.length < 100 && !result.nameServers.includes(ns)) {
+        // 验证是否为有效域名格式，排除 URL 和 ICANN 相关
+        if (ns && ns.includes('.') && !ns.includes(' ') && ns.length < 100 && 
+            !ns.startsWith('http') && !ns.includes('icann') && !ns.includes('://') &&
+            !result.nameServers.includes(ns)) {
           result.nameServers.push(ns);
         }
       }
@@ -2385,6 +2402,27 @@ function parseWhoisText(text: string, domain: string): any {
       result.registrant.email = emailMatch[1].trim();
     }
   }
+  
+  // ==================== 最终清洗：移除所有垃圾数据 ====================
+  const fieldsToSanitize = ['registrar', 'registrationDate', 'expirationDate', 'lastUpdated'] as const;
+  for (const field of fieldsToSanitize) {
+    if (result[field] && isGarbageValue(result[field])) {
+      result[field] = null;
+    }
+  }
+  
+  // 清洗 NS 列表：移除 URL 和无效条目
+  result.nameServers = result.nameServers.filter((ns: string) => {
+    if (!ns || ns.length < 3) return false;
+    if (ns.includes('http') || ns.includes('icann') || ns.includes('://')) return false;
+    if (isGarbageValue(ns)) return false;
+    // NS 应该包含至少一个点且只含 DNS 合法字符
+    if (!/^[a-z0-9][a-z0-9.-]+\.[a-z]{2,}$/.test(ns)) return false;
+    return true;
+  });
+  
+  // 清洗状态列表
+  result.status = result.status.filter((s: string) => !isGarbageValue(s) && s.length > 1);
   
   // 翻译状态码
   result.statusTranslated = result.status.map((s: string) => translateStatus(s));
