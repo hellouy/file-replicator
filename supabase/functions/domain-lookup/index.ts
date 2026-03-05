@@ -56,9 +56,9 @@ const FAST_WHOIS_SERVERS = new Set([
 
 // 已知的 ccTLD RDAP 服务器（IANA bootstrap 中缺失的）- 扩展版
 const CCTLD_RDAP_OVERRIDES: Record<string, string> = {
+  // 非洲
   'td': 'https://rdap.nic.td/',
   'cd': 'https://rdap.nic.cd/',
-  'bn': 'https://rdap.bnnic.bn/',
   'ng': 'https://rdap.nic.net.ng/',
   'ke': 'https://rdap.kenic.or.ke/',
   'tz': 'https://rdap.tznic.or.tz/',
@@ -93,6 +93,83 @@ const CCTLD_RDAP_OVERRIDES: Record<string, string> = {
   'ao': 'https://rdap.nic.ao/',
   'mz': 'https://rdap.nic.mz/',
   'zw': 'https://rdap.zispa.co.zw/',
+  'na': 'https://rdap.nic.na/',
+  'bw': 'https://rdap.nic.bw/',
+  'ls': 'https://rdap.nic.ls/',
+  'sz': 'https://rdap.nic.sz/',
+  'sc': 'https://rdap.nic.sc/',
+  'mu': 'https://rdap.nic.mu/',
+  'cv': 'https://rdap.nic.cv/',
+  'gw': 'https://rdap.nic.gw/',
+  'st': 'https://rdap.nic.st/',
+  'km': 'https://rdap.nic.km/',
+  'er': 'https://rdap.nic.er/',
+  'ss': 'https://rdap.nic.ss/',
+  // 亚洲/太平洋
+  'bn': 'https://rdap.bnnic.bn/',
+  'bt': 'https://rdap.nic.bt/',
+  'mv': 'https://rdap.nic.mv/',
+  'tl': 'https://rdap.nic.tl/',
+  'pg': 'https://rdap.nic.pg/',
+  'fj': 'https://rdap.nic.fj/',
+  'ws': 'https://rdap.nic.ws/',
+  'to': 'https://rdap.nic.to/',
+  'vu': 'https://rdap.nic.vu/',
+  'sb': 'https://rdap.nic.sb/',
+  'nr': 'https://rdap.nic.nr/',
+  'ki': 'https://rdap.nic.ki/',
+  'tv': 'https://rdap.nic.tv/',
+  'fm': 'https://rdap.nic.fm/',
+  'pw': 'https://rdap.nic.pw/',
+  'mm': 'https://rdap.nic.mm/',
+  'kh': 'https://rdap.nic.kh/',
+  'la': 'https://rdap.nic.la/',
+  'np': 'https://rdap.nic.np/',
+  'af': 'https://rdap.nic.af/',
+  'pk': 'https://rdap.pknic.net.pk/',
+  // 加勒比海/大洋洲
+  'ag': 'https://rdap.nic.ag/',
+  'dm': 'https://rdap.nic.dm/',
+  'gd': 'https://rdap.nic.gd/',
+  'gy': 'https://rdap.nic.gy/',
+  'ht': 'https://rdap.nic.ht/',
+  'sr': 'https://rdap.nic.sr/',
+  'bb': 'https://rdap.nic.bb/',
+  'lc': 'https://rdap.nic.lc/',
+  'vc': 'https://rdap.nic.vc/',
+  'kn': 'https://rdap.nic.kn/',
+  'tt': 'https://rdap.nic.tt/',
+  'jm': 'https://rdap.nic.jm/',
+  'bz': 'https://rdap.nic.bz/',
+  'cu': 'https://rdap.nic.cu/',
+  // 中东
+  'iq': 'https://rdap.nic.iq/',
+  'ye': 'https://rdap.nic.ye/',
+  'om': 'https://rdap.nic.om/',
+  'bh': 'https://rdap.nic.bh/',
+  'lb': 'https://rdap.nic.lb/',
+  'jo': 'https://rdap.nic.jo/',
+  'ps': 'https://rdap.nic.ps/',
+  'sy': 'https://rdap.nic.sy/',
+  // 欧洲/中亚
+  'ge': 'https://rdap.nic.ge/',
+  'am': 'https://rdap.nic.am/',
+  'az': 'https://rdap.nic.az/',
+  'tj': 'https://rdap.nic.tj/',
+  'tm': 'https://rdap.nic.tm/',
+  'kg': 'https://rdap.nic.kg/',
+  'uz': 'https://rdap.nic.uz/',
+  'md': 'https://rdap.nic.md/',
+  'ba': 'https://rdap.nic.ba/',
+  'me': 'https://rdap.nic.me/',
+  'mk': 'https://rdap.nic.mk/',
+  'al': 'https://rdap.nic.al/',
+  'xk': 'https://rdap.nic.xk/',
+  'mt': 'https://rdap.nic.mt/',
+  'cy': 'https://rdap.nic.cy/',
+  'is': 'https://rdap.isnic.is/',
+  'fo': 'https://rdap.nic.fo/',
+  'gl': 'https://rdap.nic.gl/',
 };
 
 // 易超时 ccTLD：给更长超时但不影响其他域名速度
@@ -497,6 +574,14 @@ const REGISTRAR_WEBSITES: Record<string, string> = {
   'fornex': 'https://fornex.com',
   'ukraine.com.ua': 'https://ukraine.com.ua',
   // ==================== 东欧/巴尔干注册商 ====================
+  'identitydigital': 'https://www.identity.digital',
+  'identity digital': 'https://www.identity.digital',
+  'donuts': 'https://donuts.domains',
+  'rightside': 'https://www.identity.digital',
+  'afilias': 'https://www.identity.digital',
+  'neustar': 'https://www.identity.digital',
+  'whois.identitydigital': 'https://www.identity.digital',
+  'nominet': 'https://www.nominet.uk',
   'nic.bg': 'https://www.register.bg',
   'superhosting': 'https://www.superhosting.bg',
   'icn.bg': 'https://www.icn.bg',
@@ -1418,6 +1503,12 @@ async function queryWhoisHttp(domain: string, tld: string): Promise<string | nul
     'td': `https://www.nic.td/whois.php?domain=${domain}`,
     'ng': `https://www.nira.org.ng/whois?domain=${domain}`,
     'cd': `https://www.nic.cd/whois/?domain=${domain}`,
+    'ls': `https://www.nic.ls/whois/?domain=${domain}`,
+    'ga': `https://my.ga/whois?domain=${domain}`,
+    'cf': `https://www.dot.cf/whois?domain=${domain}`,
+    'gq': `https://www.dominio.gq/whois?domain=${domain}`,
+    'ml': `https://www.point.ml/whois?domain=${domain}`,
+    'tk': `https://www.dot.tk/whois?domain=${domain}`,
   };
   
   if (tldHttpEndpoints[tld]) {
@@ -1444,19 +1535,52 @@ async function queryWhoisHttp(domain: string, tld: string): Promise<string | nul
       if (response.ok) {
         let text = await response.text();
         
-        // 从 whois.com HTML 中提取 WHOIS 原始文本
+        // 从 whois.com HTML 中提取 WHOIS 原始文本 - 增强版
         if (url.includes('whois.com') && text.includes('<pre')) {
-          const preMatch = text.match(/<pre[^>]*class="df-raw"[^>]*>([\s\S]*?)<\/pre>/i) ||
-                           text.match(/<pre[^>]*>([\s\S]*?)<\/pre>/gi);
-          if (preMatch) {
-            const extracted = Array.isArray(preMatch) && typeof preMatch[0] === 'string' && preMatch[0].startsWith('<')
-              ? preMatch.map(m => m.replace(/<\/?pre[^>]*>/gi, '')).join('\n')
-              : (preMatch[1] || preMatch[0]);
-            text = extracted
-              .replace(/<[^>]+>/g, '') // strip remaining HTML tags
+          // 优先匹配 class="df-raw" 的 pre 标签
+          const dfRawMatch = text.match(/<pre[^>]*class="df-raw"[^>]*>([\s\S]*?)<\/pre>/i);
+          if (dfRawMatch && dfRawMatch[1]) {
+            text = dfRawMatch[1]
+              .replace(/<[^>]+>/g, '') // strip all HTML tags
               .replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&')
-              .replace(/&#(\d+);/g, (_, n) => String.fromCharCode(Number(n)));
-            console.log(`Extracted WHOIS text from HTML: ${text.length} chars`);
+              .replace(/&nbsp;/g, ' ').replace(/&quot;/g, '"').replace(/&apos;/g, "'")
+              .replace(/&#(\d+);/g, (_, n) => String.fromCharCode(Number(n)))
+              .replace(/&#x([0-9a-fA-F]+);/g, (_, n) => String.fromCharCode(parseInt(n, 16)));
+            console.log(`Extracted WHOIS text from df-raw: ${text.length} chars`);
+          } else {
+            // 回退: 提取所有 <pre> 标签内容
+            const preMatches = text.match(/<pre[^>]*>([\s\S]*?)<\/pre>/gi);
+            if (preMatches && preMatches.length > 0) {
+              // 合并所有 pre 内容，过滤掉含 JavaScript 代码的块
+              const cleanedParts: string[] = [];
+              for (const preBlock of preMatches) {
+                const inner = preBlock.replace(/<\/?pre[^>]*>/gi, '');
+                // 跳过包含 JavaScript 代码的块
+                if (inner.includes('function(') || inner.includes('var ') || 
+                    inner.includes('document.') || inner.includes('$(') ||
+                    inner.includes("'+data[") || inner.includes('data[\'') ||
+                    inner.includes('createElement') || inner.includes('.innerHTML')) {
+                  continue;
+                }
+                cleanedParts.push(inner);
+              }
+              if (cleanedParts.length > 0) {
+                text = cleanedParts.join('\n')
+                  .replace(/<[^>]+>/g, '')
+                  .replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&')
+                  .replace(/&nbsp;/g, ' ').replace(/&quot;/g, '"').replace(/&apos;/g, "'")
+                  .replace(/&#(\d+);/g, (_, n) => String.fromCharCode(Number(n)))
+                  .replace(/&#x([0-9a-fA-F]+);/g, (_, n) => String.fromCharCode(parseInt(n, 16)));
+                console.log(`Extracted WHOIS text from pre blocks: ${text.length} chars`);
+              }
+            }
+          }
+          
+          // 最终安全检查：如果提取的文本仍含 JS 模板代码，丢弃
+          if (text.includes("'+data[") || text.includes('data[\'') || 
+              text.includes('function(') || text.includes('document.getElementById')) {
+            console.log('Extracted text contains JavaScript code, discarding');
+            continue;
           }
         }
         
@@ -1464,7 +1588,8 @@ async function queryWhoisHttp(domain: string, tld: string): Promise<string | nul
           text.includes('Domain') || text.includes('domain') || 
           text.includes('Registrar') || text.includes('创建日期') ||
           text.includes('Name Server') || text.includes('nserver') ||
-          text.includes('registrar') || text.includes('Expir')
+          text.includes('registrar') || text.includes('Expir') ||
+          text.includes('Creation') || text.includes('Status')
         )) {
           console.log(`HTTP WHOIS response received: ${text.length} bytes`);
           return text;
@@ -1745,13 +1870,43 @@ function parseWhoisText(text: string, domain: string): any {
   
   // 辅助函数: 清理提取的值
   const cleanValue = (value: string): string => {
-    return value.trim()
+    let cleaned = value.trim()
       .replace(/^\s*:\s*/, '') // 移除开头的冒号
       .replace(/\s+/g, ' ') // 规范化空格
       .replace(/[\x00-\x1F\x7F]/g, '') // 移除控制字符
       .replace(/^\s*[-=]+\s*$/, '') // 移除纯分隔线
       .replace(/\.$/, '') // 移除末尾的点（NS记录等）
       .trim();
+    return cleaned;
+  };
+  
+  // 辅助函数: 检测值是否为 HTML/JS 垃圾数据
+  const isGarbageValue = (value: string): boolean => {
+    if (!value || value.length === 0) return true;
+    // 检测 HTML 标签残留
+    if (/<\/?[a-z][\s\S]*>/i.test(value)) return true;
+    // 检测 JavaScript 代码片段
+    if (/\bdata\[['"]/.test(value)) return true;
+    if (/\bfunction\s*\(/.test(value)) return true;
+    if (/\bdocument\./.test(value)) return true;
+    if (/\$\(/.test(value)) return true;
+    if (/'\s*\+\s*data/.test(value)) return true;
+    if (/\.innerHTML/.test(value)) return true;
+    if (/createElement/.test(value)) return true;
+    if (/var\s+\w+\s*=/.test(value)) return true;
+    // 检测纯符号/分隔线
+    if (/^[=\-_.~*#@!|{}()\[\]<>\\\/]+$/.test(value)) return true;
+    // 检测过短且无意义
+    if (value.length <= 1 && !/\w/.test(value)) return true;
+    return false;
+  };
+  
+  // 辅助函数: 安全提取值（带垃圾检测）
+  const safeExtract = (value: string | null): string | null => {
+    if (!value) return null;
+    const cleaned = cleanValue(value);
+    if (isGarbageValue(cleaned)) return null;
+    return cleaned;
   };
   
   // 辅助函数: 检测字段匹配
@@ -1818,25 +1973,25 @@ function parseWhoisText(text: string, domain: string): any {
     
     // 解析注册商
     if (!result.registrar) {
-      const value = matchField(trimmedLine, fieldMappings.registrar);
+      const value = safeExtract(matchField(trimmedLine, fieldMappings.registrar));
       if (value) result.registrar = value;
     }
     
     // 解析注册日期
     if (!result.registrationDate) {
-      const value = matchField(trimmedLine, fieldMappings.registrationDate);
+      const value = safeExtract(matchField(trimmedLine, fieldMappings.registrationDate));
       if (value) result.registrationDate = value;
     }
     
     // 解析过期日期
     if (!result.expirationDate) {
-      const value = matchField(trimmedLine, fieldMappings.expirationDate);
+      const value = safeExtract(matchField(trimmedLine, fieldMappings.expirationDate));
       if (value) result.expirationDate = value;
     }
     
     // 解析更新日期
     if (!result.lastUpdated) {
-      const value = matchField(trimmedLine, fieldMappings.lastUpdated);
+      const value = safeExtract(matchField(trimmedLine, fieldMappings.lastUpdated));
       if (value) result.lastUpdated = value;
     }
     
@@ -1863,7 +2018,8 @@ function parseWhoisText(text: string, domain: string): any {
     if (statusValue) {
       // 完整状态值（去掉URL但保留描述性文本）
       const fullStatus = statusValue.split('http')[0].trim();
-      if (fullStatus && !result.status.includes(fullStatus)) {
+      // 过滤垃圾状态值
+      if (fullStatus && !result.status.includes(fullStatus) && !isGarbageValue(fullStatus) && fullStatus.length > 1) {
         result.status.push(fullStatus);
       }
     }
@@ -1872,32 +2028,42 @@ function parseWhoisText(text: string, domain: string): any {
     if (currentContactType === 'registrant' || currentContactType === null) {
       // 注册人姓名
       if (!result.registrant?.name) {
-        let value = matchField(trimmedLine, fieldMappings.registrantName);
-        // 法语 "Nom:" 字段只在明确的 HOLDER 区块内匹配，避免匹配 "Nom de domaine:"
-        if (!value && currentContactType === 'registrant') {
-          value = matchField(trimmedLine, fieldMappings.registrantNameFrench || []);
+        const value = safeExtract(matchField(trimmedLine, fieldMappings.registrantName));
+        if (value) {
+          if (!result.registrant) result.registrant = {};
+          result.registrant.name = value;
         }
-        if (value && !value.toLowerCase().includes('domaine')) {
-          const cleanRegistrantName = value.replace(/^(?:name|registrant)\s*:\s*/i, '').trim();
-          if (cleanRegistrantName) {
+        // 法语 "Nom:" 仅在联系人区块内匹配
+        if (!result.registrant?.name && currentContactType === 'registrant') {
+          const frValue = safeExtract(matchField(trimmedLine, fieldMappings.registrantNameFrench));
+          if (frValue) {
             if (!result.registrant) result.registrant = {};
-            result.registrant.name = cleanRegistrantName;
+            result.registrant.name = frValue;
           }
         }
       }
       
       // 注册人组织
       if (!result.registrant?.organization) {
-        const value = matchField(trimmedLine, fieldMappings.registrantOrg);
+        const value = safeExtract(matchField(trimmedLine, fieldMappings.registrantOrg));
         if (value) {
           if (!result.registrant) result.registrant = {};
           result.registrant.organization = value;
         }
       }
       
+      // 注册人地址
+      if (!result.registrant?.address) {
+        const value = safeExtract(matchField(trimmedLine, fieldMappings.registrantAddress));
+        if (value) {
+          if (!result.registrant) result.registrant = {};
+          result.registrant.address = value;
+        }
+      }
+      
       // 注册人国家
       if (!result.registrant?.country) {
-        const value = matchField(trimmedLine, fieldMappings.registrantCountry);
+        const value = safeExtract(matchField(trimmedLine, fieldMappings.registrantCountry));
         if (value) {
           if (!result.registrant) result.registrant = {};
           result.registrant.country = value;
@@ -1906,7 +2072,7 @@ function parseWhoisText(text: string, domain: string): any {
       
       // 注册人邮箱
       if (!result.registrant?.email) {
-        const value = matchField(trimmedLine, fieldMappings.registrantEmail);
+        const value = safeExtract(matchField(trimmedLine, fieldMappings.registrantEmail));
         if (value && value.includes('@')) {
           if (!result.registrant) result.registrant = {};
           result.registrant.email = value;
@@ -1915,7 +2081,7 @@ function parseWhoisText(text: string, domain: string): any {
       
       // 注册人电话
       if (!result.registrant?.phone) {
-        const value = matchField(trimmedLine, fieldMappings.registrantPhone);
+        const value = safeExtract(matchField(trimmedLine, fieldMappings.registrantPhone));
         if (value) {
           if (!result.registrant) result.registrant = {};
           result.registrant.phone = value;
@@ -1924,7 +2090,7 @@ function parseWhoisText(text: string, domain: string): any {
       
       // 注册人城市
       if (!result.registrant?.city) {
-        const value = matchField(trimmedLine, fieldMappings.registrantCity);
+        const value = safeExtract(matchField(trimmedLine, fieldMappings.registrantCity));
         if (value) {
           if (!result.registrant) result.registrant = {};
           result.registrant.city = value;
@@ -2479,6 +2645,43 @@ async function getRdapBootstrap(): Promise<Record<string, string>> {
 
 function getTld(domain: string): string {
   const parts = domain.split('.');
+  // 处理二级 ccTLD（如 .co.uk, .com.cn）
+  if (parts.length >= 3) {
+    const lastTwo = parts.slice(-2).join('.');
+    const knownSldCctlds = new Set([
+      'co.uk', 'org.uk', 'ac.uk', 'gov.uk', 'me.uk',
+      'com.au', 'net.au', 'org.au',
+      'co.nz', 'net.nz', 'org.nz',
+      'co.za', 'org.za', 'net.za',
+      'com.br', 'org.br', 'net.br',
+      'com.cn', 'net.cn', 'org.cn',
+      'co.jp', 'or.jp', 'ne.jp',
+      'co.kr', 'or.kr',
+      'com.tw', 'net.tw', 'org.tw',
+      'com.hk', 'org.hk',
+      'com.sg', 'org.sg',
+      'co.in', 'org.in', 'net.in',
+      'co.id', 'or.id',
+      'co.th', 'or.th',
+      'com.vn', 'net.vn',
+      'com.ph', 'org.ph',
+      'com.mx', 'org.mx',
+      'com.ar', 'org.ar',
+      'co.il', 'org.il',
+      'com.tr', 'org.tr',
+      'co.ke', 'or.ke',
+      'co.tz', 'or.tz',
+      'com.ng', 'org.ng',
+      'com.eg', 'org.eg',
+      'com.sa', 'net.sa',
+      'com.ua', 'org.ua',
+      'com.co', 'org.co',
+      'com.pe', 'org.pe',
+    ]);
+    if (knownSldCctlds.has(lastTwo)) {
+      return lastTwo;
+    }
+  }
   return parts[parts.length - 1].toLowerCase();
 }
 
@@ -3048,14 +3251,66 @@ serve(async (req) => {
       );
     }
     
-    const normalizedDomain = domain.toLowerCase().trim();
+    let normalizedDomain = domain.toLowerCase().trim();
     
-    const domainRegex = /^[a-zA-Z0-9\u4e00-\u9fa5][a-zA-Z0-9\u4e00-\u9fa5-]{0,61}[a-zA-Z0-9\u4e00-\u9fa5]?\.[a-zA-Z\u4e00-\u9fa5]{2,}$/;
+    // 支持 IDN 域名 (xn-- punycode 前缀) 和多级子域名
+    // 格式: label.tld 或 sub.label.tld 或 xn--xxx.tld 或 中文.中文
+    const domainRegex = /^(?:[a-zA-Z0-9\u0080-\uffff](?:[a-zA-Z0-9\u0080-\uffff-]{0,61}[a-zA-Z0-9\u0080-\uffff])?\.)+[a-zA-Z\u0080-\uffff]{2,}$/;
     if (!domainRegex.test(normalizedDomain)) {
       return new Response(
         JSON.stringify({ error: '域名格式无效' }),
         { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
+    }
+    
+    // 对于三级及以上域名（如 www.example.com），提取主域名进行查询
+    const parts = normalizedDomain.split('.');
+    if (parts.length > 2) {
+      // 检查是否为二级 ccTLD (如 .co.uk, .com.au, .org.cn)
+      const knownSldCctlds = new Set([
+        'co.uk', 'org.uk', 'ac.uk', 'gov.uk', 'net.uk', 'me.uk',
+        'com.au', 'net.au', 'org.au', 'edu.au', 'gov.au',
+        'co.nz', 'net.nz', 'org.nz', 'ac.nz',
+        'co.za', 'org.za', 'net.za', 'gov.za', 'ac.za',
+        'com.br', 'org.br', 'net.br', 'gov.br',
+        'com.cn', 'net.cn', 'org.cn', 'gov.cn', 'ac.cn', 'edu.cn',
+        'co.jp', 'or.jp', 'ne.jp', 'ac.jp', 'go.jp',
+        'co.kr', 'or.kr', 'ne.kr', 'ac.kr', 'go.kr',
+        'com.tw', 'net.tw', 'org.tw', 'edu.tw', 'gov.tw',
+        'com.hk', 'org.hk', 'net.hk', 'edu.hk', 'gov.hk',
+        'com.sg', 'org.sg', 'net.sg', 'edu.sg', 'gov.sg',
+        'com.my', 'org.my', 'net.my', 'edu.my', 'gov.my',
+        'co.in', 'org.in', 'net.in', 'ac.in', 'gov.in',
+        'co.id', 'or.id', 'web.id', 'ac.id', 'go.id',
+        'co.th', 'or.th', 'ac.th', 'go.th', 'in.th',
+        'com.vn', 'net.vn', 'org.vn', 'edu.vn', 'gov.vn',
+        'com.ph', 'org.ph', 'net.ph', 'edu.ph', 'gov.ph',
+        'com.ar', 'org.ar', 'net.ar', 'gov.ar',
+        'com.mx', 'org.mx', 'net.mx', 'gob.mx', 'edu.mx',
+        'co.il', 'org.il', 'net.il', 'ac.il',
+        'com.tr', 'org.tr', 'net.tr', 'gov.tr', 'edu.tr',
+        'co.ke', 'or.ke', 'ac.ke', 'go.ke',
+        'co.tz', 'or.tz', 'ac.tz', 'go.tz',
+        'com.ng', 'org.ng', 'net.ng', 'edu.ng', 'gov.ng',
+        'com.eg', 'org.eg', 'net.eg', 'edu.eg', 'gov.eg',
+        'ac.za', 'co.za',
+        'com.sa', 'net.sa', 'org.sa', 'gov.sa',
+        'com.ua', 'org.ua', 'net.ua', 'edu.ua', 'gov.ua',
+        'com.ru', 'org.ru', 'net.ru',
+        'co.ve', 'com.ve', 'org.ve', 'net.ve',
+        'com.co', 'org.co', 'net.co', 'edu.co', 'gov.co',
+        'com.pe', 'org.pe', 'net.pe', 'edu.pe', 'gob.pe',
+      ]);
+      
+      const lastTwo = parts.slice(-2).join('.');
+      if (knownSldCctlds.has(lastTwo) && parts.length > 2) {
+        // 三级域名属于二级ccTLD（如 example.co.uk），提取 example.co.uk
+        normalizedDomain = parts.slice(-3).join('.');
+      } else if (parts.length > 2) {
+        // 普通子域名（如 www.example.com），提取 example.com
+        normalizedDomain = parts.slice(-2).join('.');
+      }
+      console.log(`Normalized subdomain to: ${normalizedDomain}`);
     }
     
     console.log(`Looking up domain: ${normalizedDomain}`);
