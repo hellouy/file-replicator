@@ -134,13 +134,13 @@ const DomainResultCard = ({ data, pricing, pricingLoading }: DomainResultCardPro
           ) : pricing?.registerPrice || pricing?.renewPrice ? (
             <>
               <span className="whitespace-nowrap">
-                <span className="text-muted-foreground">{t('pricing.register')}:</span>
+                <span className="text-muted-foreground">{language === 'zh' ? '注册' : 'Register'}:</span>
                 <span className="font-medium text-primary ml-1">
                   {pricing?.registerPrice ? `¥${pricing.registerPrice}` : '-'}
                 </span>
               </span>
               <span className="whitespace-nowrap">
-                <span className="text-muted-foreground">{t('pricing.renew')}:</span>
+                <span className="text-muted-foreground">{language === 'zh' ? '续费' : 'Renew'}:</span>
                 <span className="font-medium text-primary ml-1">
                   {pricing?.renewPrice ? `¥${pricing.renewPrice}` : '-'}
                 </span>

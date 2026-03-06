@@ -1142,7 +1142,7 @@ function formatDateChinese(dateStr: string): string {
   return `${year}年${month}月${day}日`;
 }
 
-// 计算域名年龄标签
+// 计算域名年龄标签 - 修正逻辑：仅30天内显示新注册
 function getAgeLabel(registrationDate: string): string | null {
   if (!registrationDate) return null;
   
@@ -1154,15 +1154,24 @@ function getAgeLabel(registrationDate: string): string | null {
     const diffMs = now.getTime() - regDate.getTime();
     const days = Math.floor(diffMs / (24 * 60 * 60 * 1000));
     const years = Math.floor(days / 365.25);
+    const months = Math.floor(days / 30.44);
     
+    // 未来日期或负数天数，忽略
+    if (days < 0) return null;
+    
+    // 30天内：新注册
+    if (days <= 30) return '新注册';
+    
+    // 30天-1年：显示具体时间
+    if (days <= 365) return `${months}个月前注册`;
+    
+    // 按年龄分级
     if (years >= 30) return '创世古董';
     if (years >= 20) return '古董域名';
     if (years >= 15) return '老域名';
     if (years >= 10) return '成熟域名';
     if (years >= 5) return '中龄域名';
-    if (years >= 1) return '新域名';
-    if (days <= 30) return '新注册';
-    return `${days}天前注册`;
+    return `注册${years}年`;
   } catch {
     return null;
   }
@@ -1897,6 +1906,10 @@ function parseWhoisText(text: string, domain: string): any {
     if (/^[=\-_.~*#@!|{}()\[\]<>\\\/]+$/.test(value)) return true;
     // 检测过短且无意义
     if (value.length <= 1 && !/\w/.test(value)) return true;
+    // 检测只有字段标签没有实际值的情况 (如 "Date:", "Name:", "Server:")
+    if (/^[A-Za-z]{2,15}:?\s*$/.test(value)) return true;
+    // 检测值只是重复了字段名
+    if (/^(Date|Updated|Modified|Changed|Server|Name|Status|Type|Domain):?\s*$/i.test(value)) return true;
     return false;
   };
   
@@ -2411,6 +2424,43 @@ function parseWhoisText(text: string, domain: string): any {
     }
   }
   
+  // 额外日期字段验证：确保日期字段能被解析为有效日期
+  for (const dateField of ['registrationDate', 'expirationDate', 'lastUpdated'] as const) {
+    if (result[dateField]) {
+      const parsed = parseDateString(result[dateField]);
+      if (!parsed) {
+        console.log(`Invalid date value for ${dateField}: "${result[dateField]}", clearing`);
+        result[dateField] = null;
+      }
+    }
+  }
+  
+  // 清洗注册人信息：移除垃圾字符和无意义值
+  if (result.registrant) {
+    const registrantFields = ['name', 'organization', 'email', 'phone', 'address', 'city', 'country'] as const;
+    for (const field of registrantFields) {
+      if (result.registrant[field]) {
+        let val = result.registrant[field].trim();
+        // 移除常见垃圾前缀/后缀
+        val = val.replace(/^[\s:=\-*#]+/, '').replace(/[\s:=\-*#]+$/, '').trim();
+        // 移除 HTML/URL 残留
+        val = val.replace(/<[^>]*>/g, '').replace(/https?:\/\/\S+/g, '').trim();
+        // 移除多余空格和控制字符
+        val = val.replace(/\s+/g, ' ').replace(/[\x00-\x1F\x7F]/g, '').trim();
+        // 验证：太短、纯数字、纯符号、或垃圾值则清除
+        if (!val || val.length <= 1 || isGarbageValue(val) || /^[\d.]+$/.test(val)) {
+          delete result.registrant[field];
+        } else {
+          result.registrant[field] = val;
+        }
+      }
+    }
+    // 如果注册人信息全部为空，移除整个对象
+    if (Object.keys(result.registrant).length === 0) {
+      result.registrant = null;
+    }
+  }
+  
   // 清洗 NS 列表：移除 URL 和无效条目
   result.nameServers = result.nameServers.filter((ns: string) => {
     if (!ns || ns.length < 3) return false;
@@ -2917,56 +2967,109 @@ function parseRdapResponse(data: RdapResponse, rawRdap: any): any {
   return result;
 }
 
-// Query pricing API from api.tian.hu
-// API returns: { code: 200, message: "...", data: { premium, register, renew, register_usd, renew_usd, cached } }
+// Query pricing API from nazhumi.com - 获取最低注册价格和最低续费价格
 async function queryPricing(domain: string): Promise<any> {
-  const url = `https://api.tian.hu/pricing/${encodeURIComponent(domain)}`;
+  const tld = getTld(domain);
   
   try {
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 8000);
+    const timeoutId = setTimeout(() => controller.abort(), 10000);
     
-    console.log(`Querying pricing API: ${url}`);
+    const url = `https://www.nazhumi.com/domain/${encodeURIComponent(tld)}`;
+    console.log(`Querying nazhumi.com pricing: ${url}`);
     
     const response = await fetch(url, {
       signal: controller.signal,
       headers: {
-        'Accept': 'application/json',
-        'User-Agent': 'DomainLookup/1.0',
-        'lang': 'zh'
+        'Accept': 'text/html,application/xhtml+xml',
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+        'Accept-Language': 'zh-CN,zh;q=0.9',
       }
     });
     
     clearTimeout(timeoutId);
     
     if (response.ok) {
-      const responseData = await response.json();
-      console.log('Pricing API response:', JSON.stringify(responseData));
+      const html = await response.text();
       
-      // API returns: { code: 200, data: { premium, register, renew, ... } }
-      const data = responseData.data;
-      if (!data) {
-        console.log('Pricing API: No data field in response');
+      // 解析HTML表格：<thead><tr><th>注册商</th><th>注册价格</th><th>续费价格</th><th>转入价格</th><th>操作</th></tr></thead>
+      // 每行: <tr><td>..注册商..</td><td>价格</td><td>续费</td><td>转入</td><td>..操作..</td></tr>
+      const rows = html.match(/<tbody[\s\S]*?<\/tbody>/i);
+      if (!rows) {
+        console.log('nazhumi: No table body found');
         return null;
       }
       
-      // premium can be string "true"/"false" or boolean
-      const isPremium = data.premium === true || data.premium === 'true';
+      const trMatches = rows[0].match(/<tr[\s\S]*?<\/tr>/gi);
+      if (!trMatches || trMatches.length === 0) {
+        console.log('nazhumi: No table rows found');
+        return null;
+      }
       
-      return {
-        registerPrice: data.register ? Number(data.register) : null,
-        renewPrice: data.renew ? Number(data.renew) : null,
-        isPremium: isPremium,
-        registerPriceUsd: data.register_usd ? Number(data.register_usd) : null,
-        renewPriceUsd: data.renew_usd ? Number(data.renew_usd) : null,
-        cached: data.cached || false,
+      let lowestRegister: number | null = null;
+      let lowestRenew: number | null = null;
+      let lowestRegCurrency = '';
+      let lowestRenewCurrency = '';
+      
+      const parsePrice = (text: string): { value: number; currency: string } | null => {
+        if (!text) return null;
+        const clean = text.replace(/<[^>]*>/g, '').trim();
+        // Match patterns like "7.89 美元", "25 元", "11.66 欧元"
+        const match = clean.match(/([\d,.]+)\s*(美元|元|欧元|USD|\$|€|EUR)?/);
+        if (match) {
+          const value = parseFloat(match[1].replace(',', ''));
+          if (isNaN(value) || value <= 0) return null;
+          const currency = match[2] || '元';
+          // Convert to CNY for comparison
+          let cnyValue = value;
+          if (currency === '美元' || currency === 'USD' || currency === '$') {
+            cnyValue = value * 7.2; // approximate
+          } else if (currency === '欧元' || currency === 'EUR' || currency === '€') {
+            cnyValue = value * 7.8; // approximate
+          }
+          return { value: cnyValue, currency };
+        }
+        return null;
       };
+      
+      for (const tr of trMatches) {
+        const tds = tr.match(/<td[\s\S]*?<\/td>/gi);
+        if (!tds || tds.length < 3) continue;
+        
+        // tds[1] = 注册价格, tds[2] = 续费价格
+        const regPrice = parsePrice(tds[1]);
+        const renewPrice = parsePrice(tds[2]);
+        
+        if (regPrice && (lowestRegister === null || regPrice.value < lowestRegister)) {
+          lowestRegister = regPrice.value;
+          lowestRegCurrency = regPrice.currency;
+        }
+        if (renewPrice && (lowestRenew === null || renewPrice.value < lowestRenew)) {
+          lowestRenew = renewPrice.value;
+          lowestRenewCurrency = renewPrice.currency;
+        }
+      }
+      
+      if (lowestRegister !== null || lowestRenew !== null) {
+        console.log(`nazhumi pricing: register=¥${lowestRegister?.toFixed(0)}, renew=¥${lowestRenew?.toFixed(0)}`);
+        return {
+          registerPrice: lowestRegister ? Math.round(lowestRegister) : null,
+          renewPrice: lowestRenew ? Math.round(lowestRenew) : null,
+          isPremium: false,
+          registerPriceUsd: null,
+          renewPriceUsd: null,
+          cached: false,
+        };
+      }
+      
+      console.log('nazhumi: No valid prices found in table');
+      return null;
     } else {
-      console.log(`Pricing API returned ${response.status}`);
+      console.log(`nazhumi returned ${response.status}`);
       return null;
     }
   } catch (error) {
-    console.log('Pricing API failed:', error);
+    console.log('nazhumi pricing failed:', error);
     return null;
   }
 }
