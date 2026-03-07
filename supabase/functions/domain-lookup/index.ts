@@ -1532,11 +1532,43 @@ async function queryWhoisWithFormats(domain: string, server: string, tld: string
 
 // 通过 HTTP 查询 WHOIS (部分注册局支持)
 async function queryWhoisHttp(domain: string, tld: string): Promise<string | null> {
+  const decodeHtmlEntities = (input: string): string => {
+    return input
+      .replace(/&lt;/g, '<')
+      .replace(/&gt;/g, '>')
+      .replace(/&amp;/g, '&')
+      .replace(/&nbsp;/g, ' ')
+      .replace(/&quot;/g, '"')
+      .replace(/&apos;/g, "'")
+      .replace(/&#(\d+);/g, (_, n) => String.fromCharCode(Number(n)))
+      .replace(/&#x([0-9a-fA-F]+);/g, (_, n) => String.fromCharCode(parseInt(n, 16)));
+  };
+
+  const sanitizeHtmlToWhoisText = (html: string): string => {
+    let text = html
+      .replace(/<script[\s\S]*?<\/script>/gi, ' ')
+      .replace(/<style[\s\S]*?<\/style>/gi, ' ')
+      .replace(/<noscript[\s\S]*?<\/noscript>/gi, ' ')
+      .replace(/<br\s*\/?\s*>/gi, '\n')
+      .replace(/<\/p>/gi, '\n')
+      .replace(/<\/div>/gi, '\n')
+      .replace(/<\/li>/gi, '\n')
+      .replace(/<[^>]+>/g, ' ');
+
+    text = decodeHtmlEntities(text)
+      .replace(/\r/g, '\n')
+      .replace(/\n{3,}/g, '\n\n')
+      .replace(/[ \t]{2,}/g, ' ')
+      .trim();
+
+    return text;
+  };
+
   // 常见的 HTTP WHOIS 端点
   const httpEndpoints = [
     `https://www.whois.com/whois/${domain}`,
   ];
-  
+
   // 特定 TLD 的 HTTP 端点 - 扩展支持更多 ccTLD
   const tldHttpEndpoints: Record<string, string> = {
     'cn': `http://whois.cnnic.cn/WhoisServlet?queryType=Domain&domain=${domain}`,
@@ -1549,24 +1581,26 @@ async function queryWhoisHttp(domain: string, tld: string): Promise<string | nul
     'ng': `https://www.nira.org.ng/whois?domain=${domain}`,
     'cd': `https://www.nic.cd/whois/?domain=${domain}`,
     'ls': `https://www.nic.ls/whois/?domain=${domain}`,
+    'ke': `https://whois.kenic.or.ke/?domain=${domain}`,
+    'ss': `https://www.nic.ss/whois?domain=${domain}`,
     'ga': `https://my.ga/whois?domain=${domain}`,
     'cf': `https://www.dot.cf/whois?domain=${domain}`,
     'gq': `https://www.dominio.gq/whois?domain=${domain}`,
     'ml': `https://www.point.ml/whois?domain=${domain}`,
     'tk': `https://www.dot.tk/whois?domain=${domain}`,
   };
-  
+
   if (tldHttpEndpoints[tld]) {
     httpEndpoints.unshift(tldHttpEndpoints[tld]);
   }
-  
+
   for (const url of httpEndpoints) {
     try {
       console.log(`Trying HTTP WHOIS: ${url}`);
       const controller = new AbortController();
       const httpTimeout = LONG_TIMEOUT_CCTLDS.has(tld) ? 15000 : 10000;
       const timeoutId = setTimeout(() => controller.abort(), httpTimeout);
-      
+
       const response = await fetch(url, {
         signal: controller.signal,
         headers: {
@@ -1574,78 +1608,68 @@ async function queryWhoisHttp(domain: string, tld: string): Promise<string | nul
           'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
         }
       });
-      
+
       clearTimeout(timeoutId);
-      
-      if (response.ok) {
-        let text = await response.text();
-        
-        // 从 whois.com HTML 中提取 WHOIS 原始文本 - 增强版
-        if (url.includes('whois.com') && text.includes('<pre')) {
-          // 优先匹配 class="df-raw" 的 pre 标签
-          const dfRawMatch = text.match(/<pre[^>]*class="df-raw"[^>]*>([\s\S]*?)<\/pre>/i);
-          if (dfRawMatch && dfRawMatch[1]) {
-            text = dfRawMatch[1]
-              .replace(/<[^>]+>/g, '') // strip all HTML tags
-              .replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&')
-              .replace(/&nbsp;/g, ' ').replace(/&quot;/g, '"').replace(/&apos;/g, "'")
-              .replace(/&#(\d+);/g, (_, n) => String.fromCharCode(Number(n)))
-              .replace(/&#x([0-9a-fA-F]+);/g, (_, n) => String.fromCharCode(parseInt(n, 16)));
-            console.log(`Extracted WHOIS text from df-raw: ${text.length} chars`);
-          } else {
-            // 回退: 提取所有 <pre> 标签内容
-            const preMatches = text.match(/<pre[^>]*>([\s\S]*?)<\/pre>/gi);
-            if (preMatches && preMatches.length > 0) {
-              // 合并所有 pre 内容，过滤掉含 JavaScript 代码的块
-              const cleanedParts: string[] = [];
-              for (const preBlock of preMatches) {
-                const inner = preBlock.replace(/<\/?pre[^>]*>/gi, '');
-                // 跳过包含 JavaScript 代码的块
-                if (inner.includes('function(') || inner.includes('var ') || 
-                    inner.includes('document.') || inner.includes('$(') ||
-                    inner.includes("'+data[") || inner.includes('data[\'') ||
-                    inner.includes('createElement') || inner.includes('.innerHTML')) {
-                  continue;
-                }
-                cleanedParts.push(inner);
+
+      if (!response.ok) continue;
+
+      let text = await response.text();
+
+      // 从 whois.com HTML 中提取 WHOIS 原始文本 - 增强版
+      if (url.includes('whois.com') && text.includes('<pre')) {
+        const dfRawMatch = text.match(/<pre[^>]*class="df-raw"[^>]*>([\s\S]*?)<\/pre>/i);
+        if (dfRawMatch && dfRawMatch[1]) {
+          text = decodeHtmlEntities(dfRawMatch[1].replace(/<[^>]+>/g, ''));
+          console.log(`Extracted WHOIS text from df-raw: ${text.length} chars`);
+        } else {
+          const preMatches = text.match(/<pre[^>]*>([\s\S]*?)<\/pre>/gi);
+          if (preMatches && preMatches.length > 0) {
+            const cleanedParts: string[] = [];
+            for (const preBlock of preMatches) {
+              const inner = preBlock.replace(/<\/?pre[^>]*>/gi, '');
+              if (inner.includes('function(') || inner.includes('var ') ||
+                  inner.includes('document.') || inner.includes('$(') ||
+                  inner.includes("'+data[") || inner.includes("data['") ||
+                  inner.includes('createElement') || inner.includes('.innerHTML')) {
+                continue;
               }
-              if (cleanedParts.length > 0) {
-                text = cleanedParts.join('\n')
-                  .replace(/<[^>]+>/g, '')
-                  .replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&')
-                  .replace(/&nbsp;/g, ' ').replace(/&quot;/g, '"').replace(/&apos;/g, "'")
-                  .replace(/&#(\d+);/g, (_, n) => String.fromCharCode(Number(n)))
-                  .replace(/&#x([0-9a-fA-F]+);/g, (_, n) => String.fromCharCode(parseInt(n, 16)));
-                console.log(`Extracted WHOIS text from pre blocks: ${text.length} chars`);
-              }
+              cleanedParts.push(inner);
+            }
+            if (cleanedParts.length > 0) {
+              text = decodeHtmlEntities(cleanedParts.join('\n').replace(/<[^>]+>/g, ''));
+              console.log(`Extracted WHOIS text from pre blocks: ${text.length} chars`);
             }
           }
-          
-          // 最终安全检查：如果提取的文本仍含 JS 模板代码，丢弃
-          if (text.includes("'+data[") || text.includes('data[\'') || 
-              text.includes('function(') || text.includes('document.getElementById')) {
-            console.log('Extracted text contains JavaScript code, discarding');
-            continue;
-          }
         }
-        
-        if (text.length > 100 && (
-          text.includes('Domain') || text.includes('domain') || 
-          text.includes('Registrar') || text.includes('创建日期') ||
-          text.includes('Name Server') || text.includes('nserver') ||
-          text.includes('registrar') || text.includes('Expir') ||
-          text.includes('Creation') || text.includes('Status')
-        )) {
-          console.log(`HTTP WHOIS response received: ${text.length} bytes`);
-          return text;
-        }
+      } else if (/<html|<body|<div|<p|<span/i.test(text)) {
+        // 非 pre 格式的页面（如部分注册局站点/防爬页面），尽量抽取可读文本
+        text = sanitizeHtmlToWhoisText(text);
+      }
+
+      // 最终安全检查：如果提取的文本仍含 JS 模板代码，丢弃
+      if (text.includes("'+data[") || text.includes("data['") ||
+          text.includes('function(') || text.includes('document.getElementById')) {
+        console.log('Extracted text contains JavaScript code, discarding');
+        continue;
+      }
+
+      if (text.length > 60 && (
+        text.includes('Domain') || text.includes('domain') ||
+        text.includes('Registrar') || text.includes('创建日期') ||
+        text.includes('Name Server') || text.includes('nserver') ||
+        text.includes('registrar') || text.includes('Expir') ||
+        text.includes('Creation') || text.includes('Status') ||
+        text.includes('Prohibited String') || text.includes('Cannot Be Registered')
+      )) {
+        console.log(`HTTP WHOIS response received: ${text.length} bytes`);
+        return text;
       }
     } catch (error) {
       console.log(`HTTP WHOIS failed for ${url}:`, error);
       continue;
     }
   }
-  
+
   return null;
 }
 
