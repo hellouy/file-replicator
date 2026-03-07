@@ -1935,26 +1935,36 @@ function parseWhoisText(text: string, domain: string): any {
   };
   
   // 当前正在解析的联系人类型
-  let currentContactType: string | null = null;
+  let currentContactType: 'registrant' | 'other' | null = null;
   let inNameServerBlock = false;
-  
+
+  const escapeRegex = (value: string): string => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
   // 辅助函数: 清理提取的值
   const cleanValue = (value: string): string => {
-    let cleaned = value.trim()
+    return value.trim()
       .replace(/^\s*:\s*/, '') // 移除开头的冒号
       .replace(/\s+/g, ' ') // 规范化空格
       .replace(/[\x00-\x1F\x7F]/g, '') // 移除控制字符
       .replace(/^\s*[-=]+\s*$/, '') // 移除纯分隔线
       .replace(/\.$/, '') // 移除末尾的点（NS记录等）
       .trim();
-    return cleaned;
   };
-  
+
+  const isLikelyPhone = (value: string): boolean => {
+    const compact = value.replace(/[\s().-]/g, '');
+    return /^\+?\d{7,}$/.test(compact);
+  };
+
+  const isLikelyEmail = (value: string): boolean => /@/.test(value) && /\./.test(value);
+
   // 辅助函数: 检测值是否为 HTML/JS 垃圾数据
   const isGarbageValue = (value: string): boolean => {
     if (!value || value.length === 0) return true;
+
     // 检测 HTML 标签残留
     if (/<\/?[a-z][\s\S]*>/i.test(value)) return true;
+
     // 检测 JavaScript 代码片段
     if (/\bdata\[['"]/.test(value)) return true;
     if (/\bfunction\s*\(/.test(value)) return true;
@@ -1964,17 +1974,25 @@ function parseWhoisText(text: string, domain: string): any {
     if (/\.innerHTML/.test(value)) return true;
     if (/createElement/.test(value)) return true;
     if (/var\s+\w+\s*=/.test(value)) return true;
+
     // 检测纯符号/分隔线
     if (/^[=\-_.~*#@!|{}()\[\]<>\\\/]+$/.test(value)) return true;
+
     // 检测过短且无意义
     if (value.length <= 1 && !/\w/.test(value)) return true;
-    // 检测只有字段标签没有实际值的情况 (如 "Date:", "Name:", "Server:")
-    if (/^[A-Za-z]{2,15}:?\s*$/.test(value)) return true;
-    // 检测值只是重复了字段名
-    if (/^(Date|Updated|Modified|Changed|Server|Name|Status|Type|Domain):?\s*$/i.test(value)) return true;
+
+    // 检测值只是字段名
+    const normalized = value.toLowerCase().replace(/[:：]\s*$/, '').trim();
+    const labelOnly = new Set([
+      'date', 'updated', 'modified', 'changed', 'server', 'name', 'status',
+      'type', 'domain', 'registrar', 'phone', 'email', 'address', 'country',
+      'city', 'organization', 'org', 'registrant'
+    ]);
+    if (labelOnly.has(normalized)) return true;
+
     return false;
   };
-  
+
   // 辅助函数: 安全提取值（带垃圾检测）
   const safeExtract = (value: string | null): string | null => {
     if (!value) return null;
@@ -1982,12 +2000,12 @@ function parseWhoisText(text: string, domain: string): any {
     if (isGarbageValue(cleaned)) return null;
     return cleaned;
   };
-  
-  // 辅助函数: 检测字段匹配
+
+  // 辅助函数: 检测字段匹配（严格标签匹配，避免 Registrar Phone 被识别为 Registrar）
   const matchField = (line: string, patterns: string[]): string | null => {
-    const lowerLine = line.toLowerCase();
-    
-    // 排除不应匹配的行 (这些行容易被误匹配)
+    const normalizedLine = line.replace(/[：﹕]/g, ':').trim();
+    const lowerLine = normalizedLine.toLowerCase();
+
     const excludePatterns = [
       'registrar whois server:', 'registrar url:', 'registrar abuse',
       'registrar registration expiration', 'registrar iana id:',
@@ -1997,29 +2015,35 @@ function parseWhoisText(text: string, domain: string): any {
     for (const exclude of excludePatterns) {
       if (lowerLine.includes(exclude)) return null;
     }
-    
+
     for (const pattern of patterns) {
-      const lowerPattern = pattern.toLowerCase().replace(':', '');
-      // 尝试精确匹配带冒号的格式
-      if (lowerLine.startsWith(lowerPattern + ':')) {
-        const colonIndex = line.indexOf(':');
-        if (colonIndex > 0) {
-          return cleanValue(line.substring(colonIndex + 1));
-        }
+      const label = pattern.replace(/[：:]\s*$/, '').trim();
+      if (!label) continue;
+
+      const escapedLabel = escapeRegex(label).replace(/\s+/g, '\\s+');
+      const strictRegex = new RegExp(`^${escapedLabel}(?:\\s*\\.{2,}\\s*|\\s*)[:：]\\s*(.+)$`, 'i');
+      const strictMatch = normalizedLine.match(strictRegex);
+      if (strictMatch?.[1]) {
+        return cleanValue(strictMatch[1]);
       }
-      // 尝试匹配不带冒号的格式（仅当pattern本身有冒号时）
-      if (pattern.includes(':') && lowerLine.startsWith(lowerPattern) && line.includes(':')) {
-        const colonIndex = line.indexOf(':');
-        if (colonIndex > 0) {
-          return cleanValue(line.substring(colonIndex + 1));
+
+      // 仅对没有冒号定义的 pattern 做有限兜底
+      if (!pattern.includes(':') && !pattern.includes('：')) {
+        const softRegex = new RegExp(`^${escapedLabel}\\s+(.+)$`, 'i');
+        const softMatch = normalizedLine.match(softRegex);
+        if (softMatch?.[1]) {
+          return cleanValue(softMatch[1]);
         }
       }
     }
+
     return null;
   };
-  
+
   for (const line of lines) {
     const trimmedLine = line.trim();
+    const lowerLine = trimmedLine.toLowerCase();
+
     if (!trimmedLine || trimmedLine.startsWith('%') || trimmedLine.startsWith('#') || trimmedLine.startsWith('>>>') || trimmedLine.startsWith('===')) {
       if (!trimmedLine && inNameServerBlock) inNameServerBlock = false;
       continue;
@@ -2034,7 +2058,7 @@ function parseWhoisText(text: string, domain: string): any {
         const continuationNs = trimmedLine
           .split(/[\s,;]+/)
           .map((s) => s.toLowerCase().trim().replace(/\.$/, '').replace(/[^\w.-]/g, ''))
-          .filter((s) => s.includes('.') && s.length > 3 && s.length < 100);
+          .filter((s) => s.includes('.') && s.length > 3 && s.length < 100 && !s.includes('://'));
 
         for (const ns of continuationNs) {
           if (!result.nameServers.includes(ns)) {
@@ -2047,17 +2071,30 @@ function parseWhoisText(text: string, domain: string): any {
         }
       }
     }
-    
+
     // 检测联系人区块
-    if (trimmedLine.includes('[HOLDER]') || trimmedLine.includes('[REGISTRANT]')) {
+    if (
+      trimmedLine.includes('[HOLDER]') ||
+      trimmedLine.includes('[REGISTRANT]') ||
+      /organization\s+using\s+domain\s+name/i.test(trimmedLine) ||
+      /registrant\s+information/i.test(trimmedLine)
+    ) {
       currentContactType = 'registrant';
       continue;
-    } else if (trimmedLine.includes('[ADMIN_C]') || trimmedLine.includes('[TECH_C]') || trimmedLine.includes('[BILLING_C]')) {
-      currentContactType = null;
+    } else if (
+      trimmedLine.includes('[ADMIN_C]') ||
+      trimmedLine.includes('[TECH_C]') ||
+      trimmedLine.includes('[BILLING_C]') ||
+      /administrative\s+contact/i.test(trimmedLine) ||
+      /technical\s+contact/i.test(trimmedLine) ||
+      /billing\s+contact/i.test(trimmedLine)
+    ) {
+      currentContactType = 'other';
       continue;
     }
-    
-    // 解析注册商
+
+    const isRegistrarMetaLine = /registrar\s+(phone|email|url|abuse|whois|iana|street|address)/i.test(lowerLine);
+
     if (!result.registrar) {
       const value = safeExtract(matchField(trimmedLine, fieldMappings.registrar));
       if (value) result.registrar = value;
