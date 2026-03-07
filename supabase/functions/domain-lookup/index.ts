@@ -1847,6 +1847,8 @@ function parseWhoisText(text: string, domain: string): any {
       'Registrant Name:', 'Registrant:', 'Registrant Contact Name:',
       'Person:', 'Owner:', 'Holder:', 'Domain Holder:', 'Holder Name:',
       'Owner Name:', 'Registrant Contact:',
+      // KZ/非标准格式（仅在注册人区块内启用）
+      'Name:',
       // 中文
       '注册人:', '持有人:', '域名持有者:', '所有者:',
       // 法语 (注意: "Nom:" 需要在 HOLDER 区块内才匹配，避免匹配 "Nom de domaine:")
@@ -1862,9 +1864,9 @@ function parseWhoisText(text: string, domain: string): any {
     registrantNameFrench: ['Nom:'],
     registrantOrg: [
       // 英语
-      'Registrant Organization:', 'Registrant Organisation:', 
+      'Registrant Organization:', 'Registrant Organisation:',
       'Registrant Contact Organization:', 'Organization:', 'Organisation:',
-      'Org:', 'Registrant Org:',
+      'Org:', 'Registrant Org:', 'Organization Name:', 'Org Name:',
       // 中文
       '注册人组织:', '组织:', '注册机构:',
       // 法语
@@ -1876,8 +1878,8 @@ function parseWhoisText(text: string, domain: string): any {
     ],
     registrantCountry: [
       // 英语
-      'Registrant Country:', 'Registrant Country/Economy:', 'Country:',
-      'Registrant Country Code:', 'Country Code:',
+      'Registrant Country:', 'Registrant Country/Economy:',
+      'Registrant Country Code:', 'Country Code:', 'Country:',
       // 中文
       '注册人国家:', '国家:', '国家/地区:',
       // 法语
@@ -1889,34 +1891,34 @@ function parseWhoisText(text: string, domain: string): any {
     ],
     registrantEmail: [
       // 英语
-      'Registrant Email:', 'Registrant Contact Email:', 'Email:',
-      'e-mail:', 'E-mail:', 'Contact Email:', 'Admin Email:',
+      'Registrant Email:', 'Registrant Contact Email:',
+      'Contact Email:', 'Admin Email:', 'Email Address:',
       // 中文
-      '注册人邮箱:', '邮箱:', '联系邮箱:', '电子邮件:',
+      '注册人邮箱:', '联系邮箱:', '电子邮件:', '邮箱:',
       // 法语
-      'Courriel:', 'E-mail:', 'Adresse électronique:',
+      'Courriel:', 'Adresse électronique:',
       // 德语
-      'E-Mail:', 'Email:',
+      'E-Mail:',
     ],
     registrantPhone: [
       // 英语
-      'Registrant Phone:', 'Phone:', 'Tel:', 'Telephone:',
+      'Registrant Phone:', 'Contact Phone:', 'Phone Number:', 'Telephone Number:',
       // 中文
       '电话:', '联系电话:',
       // 法语
-      'Téléphone:', 'Telephone:', 'Tel:',
+      'Téléphone:', 'Telephone:',
       // 德语
       'Telefon:',
     ],
     registrantAddress: [
       // 英语
-      'Registrant Street:', 'Address:', 'Street:', 'Registrant Address:',
+      'Registrant Street:', 'Registrant Address:', 'Street Address:', 'Street:',
       // 中文
       '地址:', '注册人地址:',
       // 法语
       'Adresse:',
       // 德语
-      'Adresse:', 'Straße:',
+      'Straße:',
     ],
     registrantCity: [
       // 英语
