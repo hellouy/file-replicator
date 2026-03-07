@@ -3294,7 +3294,7 @@ async function smartDomainQueryInternal(domain: string, tld: string, errors: str
     const httpWhoisPromise = queryWhoisHttp(domain, tld).then(text => {
       if (text) {
         const parsed = parseWhoisText(text, domain);
-        if (parsed.registrar || parsed.registrationDate || parsed.nameServers?.length > 0) {
+        if (hasUsableDomainData(parsed)) {
           return { type: 'http_whois', data: parsed };
         }
       }
@@ -3315,13 +3315,13 @@ async function smartDomainQueryInternal(domain: string, tld: string, errors: str
             // 对 RDAP/WHOIS 结果检查有效性
             if (result.type === 'rdap') {
               const parsed = parseRdapResponse(result.data, result.data);
-              if (parsed.registrar || parsed.registrationDate || parsed.nameServers?.length > 0) {
+              if (hasUsableDomainData(parsed)) {
                 resolved = true;
                 resolve({ type: 'rdap', data: parsed });
                 return;
               }
             } else if (result.type === 'whois') {
-              if (result.data.registrar || result.data.registrationDate || result.data.nameServers?.length > 0) {
+              if (hasUsableDomainData(result.data)) {
                 resolved = true;
                 resolve(result);
                 return;
@@ -3386,7 +3386,7 @@ async function smartDomainQueryInternal(domain: string, tld: string, errors: str
     try {
       const whoisData = await queryWhois(domain);
       
-      if (whoisData && (whoisData.registrar || whoisData.registrationDate || whoisData.nameServers?.length > 0)) {
+      if (whoisData && hasUsableDomainData(whoisData)) {
         console.log('WHOIS fallback successful');
         return { data: whoisData, source: 'whois', availability: 'registered' };
       }
