@@ -1221,6 +1221,42 @@ function getRemainingDays(expirationDate: string): number | null {
   }
 }
 
+function hasMeaningfulStatus(statuses: string[] | undefined): boolean {
+  if (!statuses || statuses.length === 0) return false;
+  return statuses.some((status) => {
+    const normalized = status.toLowerCase().trim();
+    if (!normalized || normalized.length < 2) return false;
+    if (normalized === 'codes,' || normalized === 'codes') return false;
+    if (normalized.includes('for more information')) return false;
+    if (normalized.includes('status codes')) return false;
+    if (normalized.includes('terms of use')) return false;
+    return true;
+  });
+}
+
+function hasMeaningfulRegistrant(registrant: any): boolean {
+  if (!registrant || typeof registrant !== 'object') return false;
+  const fields = ['name', 'organization', 'email', 'phone', 'country', 'address', 'city'] as const;
+  return fields.some((field) => {
+    const value = registrant[field];
+    return typeof value === 'string' && value.trim().length > 1;
+  });
+}
+
+function hasUsableDomainData(parsed: any): boolean {
+  if (!parsed || typeof parsed !== 'object') return false;
+
+  if (parsed.registrar && typeof parsed.registrar === 'string' && parsed.registrar.trim().length > 1) return true;
+  if (parsed.registrationDate && typeof parsed.registrationDate === 'string' && parsed.registrationDate.trim().length > 1) return true;
+  if (parsed.expirationDate && typeof parsed.expirationDate === 'string' && parsed.expirationDate.trim().length > 1) return true;
+  if (parsed.lastUpdated && typeof parsed.lastUpdated === 'string' && parsed.lastUpdated.trim().length > 1) return true;
+  if (Array.isArray(parsed.nameServers) && parsed.nameServers.length > 0) return true;
+  if (hasMeaningfulStatus(parsed.status)) return true;
+  if (hasMeaningfulRegistrant(parsed.registrant)) return true;
+
+  return false;
+}
+
 // ==================== WHOIS 查询功能 ====================
 
 // 从 GitHub 动态获取 WHOIS 服务器列表
