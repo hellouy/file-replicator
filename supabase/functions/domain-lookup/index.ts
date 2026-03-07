@@ -2643,7 +2643,7 @@ async function queryWhois(domain: string): Promise<any> {
     if (tcpResponse) {
       const parsed = parseWhoisText(tcpResponse, domain);
       // 检查是否获取到有效数据
-      if (parsed.registrar || parsed.registrationDate || parsed.nameServers.length > 0) {
+      if (hasUsableDomainData(parsed)) {
         console.log('WHOIS TCP query successful');
         return parsed;
       }
@@ -2714,7 +2714,7 @@ async function queryWhois(domain: string): Promise<any> {
           const referResponse = await queryWhoisTcp(domain, referServer, 6000);
           if (referResponse) {
             const parsed = parseWhoisText(referResponse, domain);
-            if (parsed.registrar || parsed.registrationDate) {
+            if (hasUsableDomainData(parsed)) {
               console.log('WHOIS referral query successful');
               return parsed;
             }
@@ -2722,7 +2722,7 @@ async function queryWhois(domain: string): Promise<any> {
         }
         
         const parsed = parseWhoisText(tcpResponse, domain);
-        if (parsed.registrar || parsed.registrationDate) {
+        if (hasUsableDomainData(parsed)) {
           console.log('WHOIS gTLD server query successful');
           return parsed;
         }
@@ -2744,7 +2744,7 @@ async function queryWhois(domain: string): Promise<any> {
       const tcpResponse = await queryWhoisWithFormats(domain, server, tld);
       if (tcpResponse && tcpResponse.length > 100) {
         const parsed = parseWhoisText(tcpResponse, domain);
-        if (parsed.registrar || parsed.registrationDate || parsed.nameServers.length > 0) {
+        if (hasUsableDomainData(parsed)) {
           console.log(`Guessed WHOIS server ${server} successful`);
           return parsed;
         }
@@ -2764,7 +2764,7 @@ async function queryWhois(domain: string): Promise<any> {
   const httpResponse = await queryWhoisHttp(domain, tld);
   if (httpResponse) {
     const parsed = parseWhoisText(httpResponse, domain);
-    if (parsed.registrar || parsed.registrationDate || parsed.nameServers.length > 0) {
+    if (hasUsableDomainData(parsed)) {
       console.log('HTTP WHOIS query successful');
       return parsed;
     }
