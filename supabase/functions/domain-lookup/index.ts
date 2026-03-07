@@ -2095,29 +2095,38 @@ function parseWhoisText(text: string, domain: string): any {
 
     const isRegistrarMetaLine = /registrar\s+(phone|email|url|abuse|whois|iana|street|address)/i.test(lowerLine);
 
-    if (!result.registrar) {
+    if (!result.registrar && !isRegistrarMetaLine) {
       const value = safeExtract(matchField(trimmedLine, fieldMappings.registrar));
-      if (value) result.registrar = value;
+      if (
+        value &&
+        !isLikelyPhone(value) &&
+        !isLikelyEmail(value) &&
+        !value.toLowerCase().startsWith('http') &&
+        !value.includes('://') &&
+        !/^id\s*:/i.test(value)
+      ) {
+        result.registrar = value;
+      }
     }
-    
+
     // 解析注册日期
     if (!result.registrationDate) {
       const value = safeExtract(matchField(trimmedLine, fieldMappings.registrationDate));
       if (value) result.registrationDate = value;
     }
-    
+
     // 解析过期日期
     if (!result.expirationDate) {
       const value = safeExtract(matchField(trimmedLine, fieldMappings.expirationDate));
       if (value) result.expirationDate = value;
     }
-    
+
     // 解析更新日期
     if (!result.lastUpdated) {
       const value = safeExtract(matchField(trimmedLine, fieldMappings.lastUpdated));
       if (value) result.lastUpdated = value;
     }
-    
+
     // 解析域名服务器
     const nsValue = matchField(trimmedLine, fieldMappings.nameServer);
     if (nsValue !== null) {
@@ -2125,7 +2134,7 @@ function parseWhoisText(text: string, domain: string): any {
       const nsParts = rawNs
         .split(/[\s,;]+/)
         .map((part) => part.toLowerCase().trim().replace(/\.$/, '').replace(/[^\w.-]/g, ''))
-        .filter((part) => part.includes('.') && part.length > 3 && part.length < 100 && 
+        .filter((part) => part.includes('.') && part.length > 3 && part.length < 100 &&
                 !part.startsWith('http') && !part.includes('icann') && !part.includes('://'));
 
       for (const cleanNs of nsParts) {
@@ -2136,86 +2145,112 @@ function parseWhoisText(text: string, domain: string): any {
 
       inNameServerBlock = true;
     }
-    
+
     // 解析状态
     const statusValue = matchField(trimmedLine, fieldMappings.status);
     if (statusValue) {
-      // 完整状态值（去掉URL但保留描述性文本）
-      const fullStatus = statusValue.split('http')[0].trim();
-      // 过滤垃圾状态值
-      if (fullStatus && !result.status.includes(fullStatus) && !isGarbageValue(fullStatus) && fullStatus.length > 1) {
+      const fullStatus = statusValue
+        .split('http')[0]
+        .replace(/for more information.*/i, '')
+        .trim();
+
+      const normalizedStatus = fullStatus.toLowerCase();
+      const isUselessStatus =
+        normalizedStatus === 'codes,' ||
+        normalizedStatus === 'codes' ||
+        normalizedStatus.includes('status codes');
+
+      if (fullStatus && !isUselessStatus && !result.status.includes(fullStatus) && !isGarbageValue(fullStatus) && fullStatus.length > 1) {
         result.status.push(fullStatus);
       }
     }
-    
-    // 解析注册人信息 (仅在 HOLDER/REGISTRANT 区块或无区块标记时)
-    if (currentContactType === 'registrant' || currentContactType === null) {
+
+    // 解析注册人信息（仅注册人区块/明确注册人字段，不解析管理员区块）
+    const allowRegistrantParse =
+      currentContactType === 'registrant' ||
+      /^(registrant|holder|owner|organization\s+using\s+domain\s+name|organization\s+name|street\s+address|email\s+address|phone\s+number|name\s*[.:])/i.test(trimmedLine);
+
+    const isRegistrantBlockedLine =
+      currentContactType === 'other' ||
+      /registrar\b/i.test(lowerLine) ||
+      /registry\s+registrant\s+id/i.test(lowerLine) ||
+      /abuse\s+contact/i.test(lowerLine);
+
+    if (allowRegistrantParse && !isRegistrantBlockedLine) {
       // 注册人姓名
       if (!result.registrant?.name) {
         const value = safeExtract(matchField(trimmedLine, fieldMappings.registrantName));
-        if (value) {
+        if (
+          value &&
+          !/^id\s*:/i.test(value) &&
+          !isLikelyEmail(value) &&
+          !isLikelyPhone(value) &&
+          !/hidden personal data/i.test(value) &&
+          value.length <= 120
+        ) {
           if (!result.registrant) result.registrant = {};
           result.registrant.name = value;
         }
+
         // 法语 "Nom:" 仅在联系人区块内匹配
         if (!result.registrant?.name && currentContactType === 'registrant') {
           const frValue = safeExtract(matchField(trimmedLine, fieldMappings.registrantNameFrench));
-          if (frValue) {
+          if (frValue && !/^id\s*:/i.test(frValue)) {
             if (!result.registrant) result.registrant = {};
             result.registrant.name = frValue;
           }
         }
       }
-      
+
       // 注册人组织
       if (!result.registrant?.organization) {
         const value = safeExtract(matchField(trimmedLine, fieldMappings.registrantOrg));
-        if (value) {
+        if (value && !/hidden personal data/i.test(value)) {
           if (!result.registrant) result.registrant = {};
           result.registrant.organization = value;
         }
       }
-      
+
       // 注册人地址
       if (!result.registrant?.address) {
         const value = safeExtract(matchField(trimmedLine, fieldMappings.registrantAddress));
-        if (value) {
+        if (value && !/hidden personal data/i.test(value)) {
           if (!result.registrant) result.registrant = {};
           result.registrant.address = value;
         }
       }
-      
+
       // 注册人国家
       if (!result.registrant?.country) {
         const value = safeExtract(matchField(trimmedLine, fieldMappings.registrantCountry));
-        if (value) {
+        if (value && !isLikelyPhone(value) && !isLikelyEmail(value)) {
           if (!result.registrant) result.registrant = {};
           result.registrant.country = value;
         }
       }
-      
+
       // 注册人邮箱
       if (!result.registrant?.email) {
         const value = safeExtract(matchField(trimmedLine, fieldMappings.registrantEmail));
-        if (value && value.includes('@')) {
+        if (value && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value) && !/registrar/i.test(lowerLine)) {
           if (!result.registrant) result.registrant = {};
           result.registrant.email = value;
         }
       }
-      
+
       // 注册人电话
       if (!result.registrant?.phone) {
         const value = safeExtract(matchField(trimmedLine, fieldMappings.registrantPhone));
-        if (value) {
+        if (value && !/registrar/i.test(lowerLine)) {
           if (!result.registrant) result.registrant = {};
           result.registrant.phone = value;
         }
       }
-      
+
       // 注册人城市
       if (!result.registrant?.city) {
         const value = safeExtract(matchField(trimmedLine, fieldMappings.registrantCity));
-        if (value) {
+        if (value && !isLikelyPhone(value) && !isLikelyEmail(value)) {
           if (!result.registrant) result.registrant = {};
           result.registrant.city = value;
         }
